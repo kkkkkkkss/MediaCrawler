@@ -236,7 +236,8 @@ class WeiboClient(ProxyRefreshMixin):
         for comment in comment_list:
             sub_comments = comment.get("comments")
             if sub_comments and isinstance(sub_comments, list):
-                await callback(note_id, sub_comments)
+                if callback:
+                    await callback(note_id, sub_comments)
                 res_sub_comments.extend(sub_comments)
         return res_sub_comments
 

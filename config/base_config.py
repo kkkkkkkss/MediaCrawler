@@ -1,126 +1,189 @@
+# 全局基础配置
+# 所有平台共享的通用参数；各平台专属配置在 config/{platform}_config.py
 
-# Repository: https://github.com/NanmiCoder/MediaCrawler/blob/main/config/base_config.py
-# GitHub: https://github.com/NanmiCoder
-
-# Basic configuration
-PLATFORM = "xhs"  # Platform, xhs | dy | ks | bili | wb | tieba | zhihu
+# ==================== 基础配置 ====================
+# 爬取目标平台，可选值：xhs(小红书)|dy(抖音)|ks(快手)|bili(B站)|wb(微博)|tieba(贴吧)|zhihu(知乎)
+# 注意：url_check 模式下此项仅用作 CDP user_data_dir 的默认值，
+#       实际平台由 URL 自动识别，无需手动修改
+PLATFORM = "xhs"
 
 # 是否使用海外版小红书 (rednote.com)
-# 开启后 API 走 webapi.rednote.com，cookie 域使用 .rednote.com
 XHS_INTERNATIONAL = False
 
-KEYWORDS = "编程副业,编程兼职"  # Keyword search configuration, separated by English commas
-LOGIN_TYPE = "qrcode"  # qrcode or phone or cookie
+# 关键词搜索配置（search 模式用），多个关键词用英文逗号分隔
+KEYWORDS = "编程副业,编程兼职"
+
+# 登录方式：qrcode(二维码)|phone(手机号)|cookie(Cookie字符串)|cookie_pool(Cookie池自动轮换)
+LOGIN_TYPE = "cookie_pool"
+
+# 登录Cookie，LOGIN_TYPE=cookie 时填写
 COOKIES = ""
-CRAWLER_TYPE = (
-    "search"  # Crawling type, search (keyword search) | detail (post details) | creator (creator homepage data)
-)
-# Whether to enable IP proxy
+
+# 爬取业务类型：search(关键词搜索)|detail(帖子详情)|creator(创作者主页)
+# url_check 模式通过 --type url_check 指定，此项不生效
+CRAWLER_TYPE = "detail"
+
+# ==================== IP代理配置（防封禁） ====================
+# 是否启用IP代理池（应对平台IP限流/封禁）
 ENABLE_IP_PROXY = False
 
-# Number of proxy IP pools
+# 代理IP池的IP数量
 IP_PROXY_POOL_COUNT = 2
 
-# Proxy IP provider name
-IP_PROXY_PROVIDER_NAME = "kuaidaili"  # kuaidaili | wandouhttp
+# 代理IP服务商，可选值：kuaidaili(快代理)|wandouhttp(豌豆HTTP)
+IP_PROXY_PROVIDER_NAME = "kuaidaili"
 
-# Setting to True will not open the browser (headless browser)
-# Setting False will open a browser
-# If Xiaohongshu keeps scanning the code to log in but fails, open the browser and manually pass the sliding verification code.
-# If Douyin keeps prompting failure, open the browser and see if mobile phone number verification appears after scanning the QR code to log in. If it does, manually go through it and try again.
-HEADLESS = False
+# ==================== 基础浏览器配置 ====================
+# True：无头模式（不打开浏览器窗口，后台运行）
+# False：打开可视化浏览器窗口（登录触发风控时，必须设为False手动过验证）
+HEADLESS = True
 
-# Whether to save login status
+# 是否保存登录状态（持久化Cookie，下次启动免重新登录）
 SAVE_LOGIN_STATE = True
 
-# ==================== CDP (Chrome DevTools Protocol) 配置 ====================
-# 是否启用 CDP 模式 - 使用用户本地的 Chrome/Edge 浏览器进行爬取，具有更好的反检测能力
-# 开启后，会自动检测并启动用户的 Chrome/Edge 浏览器，通过 CDP 协议进行控制
-# 该方式使用真实浏览器环境，包括用户的扩展、Cookie 和设置，大幅降低被风控检测的风险
-ENABLE_CDP_MODE = True
+# ==================== CDP (Chrome DevTools Protocol) 反爬核心配置 ====================
+# 是否启用CDP模式：调用本地**真实Chrome/Edge浏览器**爬取，反检测能力极强
+ENABLE_CDP_MODE = False
 
-# CDP 调试端口，用于与浏览器通信
-# 如果端口被占用，系统会自动尝试下一个可用端口
+# CDP远程调试端口（浏览器通信端口），端口被占用会自动尝试下一个
 CDP_DEBUG_PORT = 9222
 
-# 自定义浏览器路径（可选）
-# 如果为空，系统会自动检测 Chrome/Edge 的安装路径
-# Windows 示例: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-# macOS 示例: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+# 自定义浏览器安装路径（可选），为空则自动检测系统Chrome/Edge
+# Windows示例: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+# macOS示例: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 CUSTOM_BROWSER_PATH = ""
 
-# 是否在 CDP 模式下启用无头模式
-# 注意：即使设置为 True，某些反检测功能在无头模式下可能无法正常工作
+# CDP模式下是否启用无头模式（建议False，无头模式易被风控检测）
 CDP_HEADLESS = False
 
-# 浏览器启动超时时间（秒）
+# 浏览器启动超时时间（单位：秒）
 BROWSER_LAUNCH_TIMEOUT = 60
 
-# 是否连接用户已打开的浏览器，而不是启动新的浏览器
-# 开启后，程序会连接一个已经启用了远程调试的浏览器
-# 用户需要在 Chrome 中开启远程调试：chrome://inspect/#remote-debugging
-# 或者使用命令行参数启动 Chrome：--remote-debugging-port=9222
-# 这种方式反检测效果最好，因为直接使用用户真实浏览器的所有 Cookie、扩展和浏览历史
-CDP_CONNECT_EXISTING = True
+# 是否连接用户**已打开**的浏览器（而非启动新浏览器）
+# 反爬效果最优：直接复用用户真实浏览器的Cookie、插件、浏览记录
+CDP_CONNECT_EXISTING = False
 
-# 程序结束时是否自动关闭浏览器
-# 设置为 False 可以保持浏览器运行，方便调试
+# 程序运行结束后，是否自动关闭浏览器
+# False：保持浏览器打开，方便调试
 AUTO_CLOSE_BROWSER = True
 
-# Data saving type option configuration, supports: csv, db, json, jsonl, sqlite, excel, postgres. It is best to save to DB, with deduplication function.
-SAVE_DATA_OPTION = "jsonl"  # csv or db or json or jsonl or sqlite or excel or postgres
+# ==================== 数据保存配置 ====================
+# 数据保存格式，支持：csv/db/json/jsonl/sqlite/excel/postgres
+# 推荐：db（自带数据去重功能）
+SAVE_DATA_OPTION = "db"
 
-# Data saving path, if not specified by default, it will be saved to the data folder.
+# 数据保存路径，为空则默认保存到项目根目录的 data 文件夹
 SAVE_DATA_PATH = ""
 
-# Browser file configuration cached by the user's browser
-USER_DATA_DIR = "%s_user_data_dir"  # %s will be replaced by platform name
+# 浏览器缓存文件目录（存储登录状态、缓存数据）
+# %s 会自动替换为当前爬取的平台名，实现多平台缓存隔离
+USER_DATA_DIR = "%s_user_data_dir"
 
-# The number of pages to start crawling starts from the first page by default
+# ==================== 爬取数量控制配置 ====================
+# 爬取起始页码（默认从第1页开始爬取）
 START_PAGE = 1
 
-# Control the number of crawled videos/posts
+# 最大爬取帖子/视频数量
 CRAWLER_MAX_NOTES_COUNT = 15
 
-# Controlling the number of concurrent crawlers
+# 爬虫最大并发数（建议设为1，并发过高极易触发风控）
 MAX_CONCURRENCY_NUM = 1
 
-# Whether to enable crawling media mode (including image or video resources), crawling media is not enabled by default
+# ==================== 媒体/评论爬取配置 ====================
+# 是否爬取媒体资源（图片/视频），默认关闭
 ENABLE_GET_MEIDAS = False
 
-# Whether to enable comment crawling mode. Comment crawling is enabled by default.
-ENABLE_GET_COMMENTS = True
+# 是否爬取评论，默认关闭
+ENABLE_GET_COMMENTS = False
 
-# Control the number of crawled first-level comments (single video/post)
+# 单个视频/帖子 最大爬取一级评论数量
 CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 10
 
-# Whether to enable the mode of crawling second-level comments. By default, crawling of second-level comments is not enabled.
-# If the old version of the project uses db, you need to refer to schema/tables.sql line 287 to add table fields.
-ENABLE_GET_SUB_COMMENTS = False
+# 是否爬取二级评论（评论的回复），默认关闭
+# 旧版数据库需手动新增字段才能存储二级评论
+ENABLE_GET_SUB_COMMENTS = True
 
-# word cloud related
-# Whether to enable generating comment word clouds
-ENABLE_GET_WORDCLOUD = False
-# Custom words and their groups
-# Add rule: xx:yy where xx is a custom-added phrase, and yy is the group name to which the phrase xx is assigned.
+# ==================== 评论词云配置 ====================
+# 是否生成评论词云图
+ENABLE_GET_WORDCLOUD = True
+
+# 自定义分词规则：键=自定义短语，值=短语分组名（用于词云精准分词）
 CUSTOM_WORDS = {
-    "零几": "年份",  # Recognize "zero points" as a whole
-    "高频词": "专业术语",  # Example custom words
+    "零几": "年份",
+    "高频词": "专业术语",
 }
 
-# Deactivate (disabled) word file path
+# 停用词文件路径（词云生成时，过滤无意义词汇）
 STOP_WORDS_FILE = "./docs/hit_stopwords.txt"
 
-# Chinese font file path
+# 中文词云字体文件路径（解决词云中文乱码问题）
 FONT_PATH = "./docs/STZHONGS.TTF"
 
-# Crawl interval
+# ==================== 爬取频率控制 ====================
+# 爬取请求的最大间隔时间（单位：秒，降低请求频率防风控）
 CRAWLER_MAX_SLEEP_SEC = 2
 
-# 是否禁用 SSL 证书验证。仅在使用企业代理、Burp Suite、mitmproxy 等会注入自签名证书的中间人代理时设为 True。
-# 警告：禁用 SSL 验证将使所有流量暴露于中间人攻击风险，请勿在生产环境中开启。
+# ==================== SSL证书配置 ====================
+# 是否禁用SSL证书验证
+# 仅在使用企业代理、抓包工具（Burp Suite/mitmproxy）时设为True
+# 警告：生产环境严禁开启，会导致流量暴露在攻击风险中
 DISABLE_SSL_VERIFY = False
 
+# ==================== URL检查模式配置 ====================
+# URL检查工作模式：validity(仅检测链接有效性)|metrics(仅抓取数据指标)|both(同时检测+抓指标)
+URLCHECK_MODE = "both"
+
+# 每批从外部库读取的URL数量
+URLCHECK_BATCH_SIZE = 15
+
+# URL检查模式下，是否同时爬取评论
+URLCHECK_ENABLE_COMMENTS = False
+
+# URL检查模式下，单个作品最大爬取评论数
+URLCHECK_MAX_COMMENTS = 15
+
+# URL检查模式的输入来源："db"(从外部MySQL读取) | "file"(从本地txt文件读取)
+URLCHECK_INPUT_SOURCE = "db"
+
+# 当 URLCHECK_INPUT_SOURCE="file" 时，指定URL文件路径（每行一个URL）
+URLCHECK_INPUT_FILE = ""
+
+# ==================== 指标提取方式配置 ====================
+# 提取模式开关：
+#   - "hardcode_first" (默认推荐) → 硬编码优先，指标不足时自动调 AI 补充
+#   - "ai_only"                   → 跳过硬编码，直接调 AI（失败回退硬编码）
+#   - "hardcode_only"             → 仅硬编码，不调 AI
+URLCHECK_EXTRACT_MODE = "hardcode_first"
+
+# ==================== AI字段映射配置（火山引擎豆包） ====================
+# 火山引擎Doubao AI模型名称（API兼容OpenAI格式，密钥从.env文件读取）
+DOUBAO_MODEL = "doubao-seed-2-0-pro-260215"
+
+# ==================== 无人值守配置（Cookie池 + 异常自动切换） ====================
+# 启用后跳过浏览器扫码登录，直接用预置 Cookie 访问各平台 API
+ENABLE_COOKIE_POOL = True
+
+# Cookie池来源："file"(本地JSON) | "db"(外部MySQL cookie_pool 表)
+COOKIE_POOL_SOURCE = "db"
+
+# 本地 Cookie 池文件（JSON 格式，按平台存储多组 Cookie）
+COOKIE_POOL_FILE = "config/cookie_pool.json"
+
+# Cookie 失效后是否自动切换到下一个
+COOKIE_AUTO_SWITCH = True
+
+# 同一 Cookie 累计致命失败（获取不到接口数据）多少次后标记为失效
+# 建议设为 2：获取不到接口数据基本可确认 Cookie 失效
+COOKIE_MAX_FAILURES = 2
+
+# ==================== IP代理增强配置 ====================
+# 注意：ENABLE_IP_PROXY 在上方基础配置中已定义
+# 以下为 url_check 模式补充的代理控制
+
+# 单个 Cookie/IP 连续请求失败多少次后自动切换代理
+PROXY_SWITCH_THRESHOLD = 3
+
+# ==================== 导入各平台专属配置 ====================
 from .bilibili_config import *
 from .xhs_config import *
 from .dy_config import *
@@ -128,3 +191,4 @@ from .ks_config import *
 from .weibo_config import *
 from .tieba_config import *
 from .zhihu_config import *
+from .toutiao_config import *

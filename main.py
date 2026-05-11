@@ -28,6 +28,8 @@ from media_platform.tieba import TieBaCrawler
 from media_platform.weibo import WeiboCrawler
 from media_platform.xhs import XiaoHongShuCrawler
 from media_platform.zhihu import ZhihuCrawler
+from media_platform.toutiao import ToutiaoCrawler
+from media_platform.url_check import UrlCheckCrawler
 from tools.async_file_writer import AsyncFileWriter
 from var import crawler_type_var
 
@@ -41,6 +43,8 @@ class CrawlerFactory:
         "wb": WeiboCrawler,
         "tieba": TieBaCrawler,
         "zhihu": ZhihuCrawler,
+        "toutiao": ToutiaoCrawler,
+        "url_check": UrlCheckCrawler,
     }
 
     @staticmethod
@@ -69,6 +73,10 @@ def _flush_excel_if_needed() -> None:
 
 
 async def _generate_wordcloud_if_needed() -> None:
+    # url_check 模式的词云在 UrlCheckCrawler 内部生成，此处跳过
+    if config.CRAWLER_TYPE == "url_check":
+        return
+
     if config.SAVE_DATA_OPTION not in ("json", "jsonl") or not config.ENABLE_GET_WORDCLOUD:
         return
 
@@ -91,7 +99,11 @@ async def main() -> None:
         print(f"Database {args.init_db} initialized successfully.")
         return
 
-    crawler = CrawlerFactory.create_crawler(platform=config.PLATFORM)
+    # url_check 模式自动识别平台，不依赖 --platform 参数
+    if config.CRAWLER_TYPE == "url_check":
+        crawler = CrawlerFactory.create_crawler(platform="url_check")
+    else:
+        crawler = CrawlerFactory.create_crawler(platform=config.PLATFORM)
     await crawler.start()
 
     _flush_excel_if_needed()
@@ -122,6 +134,10 @@ async def async_cleanup() -> None:
 
     if config.SAVE_DATA_OPTION in ("db", "sqlite"):
         await db.close()
+
+    if config.CRAWLER_TYPE == "url_check":
+        from database.external_db import external_db
+        await external_db.close()
 
 if __name__ == "__main__":
     from tools.app_runner import run

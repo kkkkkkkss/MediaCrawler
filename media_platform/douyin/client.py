@@ -193,16 +193,19 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         headers["Referer"] = urllib.parse.quote(referer_url, safe=':/')
         return await self.get("/aweme/v1/web/general/search/single/", query_params, headers=headers)
 
-    async def get_video_by_id(self, aweme_id: str) -> Any:
+    async def get_video_by_id(self, aweme_id: str, raw: bool = False) -> Any:
         """
         DouYin Video Detail API
-        :param aweme_id:
+        :param aweme_id: 作品ID
+        :param raw: 为 True 时返回完整接口响应（供 AI 解析），否则只返回 aweme_detail
         :return:
         """
         params = {"aweme_id": aweme_id}
         headers = copy.copy(self.headers)
         del headers["Origin"]
         res = await self.get("/aweme/v1/web/aweme/detail/", params, headers)
+        if raw:
+            return res
         return res.get("aweme_detail", {})
 
     async def get_aweme_comments(self, aweme_id: str, cursor: int = 0):

@@ -31,6 +31,7 @@ class PlatformEnum(str, Enum):
     WEIBO = "wb"
     TIEBA = "tieba"
     ZHIHU = "zhihu"
+    TOUTIAO = "toutiao"
 
 
 class LoginTypeEnum(str, Enum):
@@ -39,6 +40,7 @@ class LoginTypeEnum(str, Enum):
     QRCODE = "qrcode"
     PHONE = "phone"
     COOKIE = "cookie"
+    COOKIE_POOL = "cookie_pool"
 
 
 class CrawlerTypeEnum(str, Enum):
@@ -47,6 +49,7 @@ class CrawlerTypeEnum(str, Enum):
     SEARCH = "search"
     DETAIL = "detail"
     CREATOR = "creator"
+    URL_CHECK = "url_check"
 
 
 class SaveDataOptionEnum(str, Enum):
@@ -139,7 +142,7 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
             LoginTypeEnum,
             typer.Option(
                 "--lt",
-                help="Login type (qrcode=QR Code | phone=Phone | cookie=Cookie)",
+                help="Login type (qrcode=QR Code | phone=Phone | cookie=Cookie | cookie_pool=Cookie Pool)",
                 rich_help_panel="Account Configuration",
             ),
         ] = _coerce_enum(LoginTypeEnum, config.LOGIN_TYPE, LoginTypeEnum.QRCODE),
@@ -285,6 +288,46 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 rich_help_panel="Proxy Configuration",
             ),
         ] = config.IP_PROXY_PROVIDER_NAME,
+        urlcheck_mode: Annotated[
+            str,
+            typer.Option(
+                "--urlcheck_mode",
+                help="url_check 模式: validity(仅检测有效性) | metrics(仅抓指标) | both(同时)",
+                rich_help_panel="URL Check Configuration",
+            ),
+        ] = config.URLCHECK_MODE,
+        urlcheck_comments: Annotated[
+            str,
+            typer.Option(
+                "--urlcheck_comments",
+                help="url_check 模式下是否同时抓评论",
+                rich_help_panel="URL Check Configuration",
+            ),
+        ] = str(config.URLCHECK_ENABLE_COMMENTS),
+        extract_mode: Annotated[
+            str,
+            typer.Option(
+                "--extract_mode",
+                help="指标提取方式: ai(AI解析完整JSON) | hardcode(硬编码路径取值)",
+                rich_help_panel="URL Check Configuration",
+            ),
+        ] = config.URLCHECK_EXTRACT_MODE,
+        urlcheck_source: Annotated[
+            str,
+            typer.Option(
+                "--urlcheck_source",
+                help="url_check 输入来源: db(外部MySQL) | file(本地txt文件)",
+                rich_help_panel="URL Check Configuration",
+            ),
+        ] = config.URLCHECK_INPUT_SOURCE,
+        urlcheck_file: Annotated[
+            str,
+            typer.Option(
+                "--urlcheck_file",
+                help="url_check 本地URL文件路径（每行一个URL）",
+                rich_help_panel="URL Check Configuration",
+            ),
+        ] = config.URLCHECK_INPUT_FILE,
     ) -> SimpleNamespace:
         """MediaCrawler 命令行入口"""
 
@@ -301,6 +344,9 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         # override global config
         config.PLATFORM = platform.value
         config.LOGIN_TYPE = lt.value
+        # LOGIN_TYPE=cookie_pool 时自动开启 Cookie 池
+        if lt == LoginTypeEnum.COOKIE_POOL:
+            config.ENABLE_COOKIE_POOL = True
         config.CRAWLER_TYPE = crawler_type.value
         config.START_PAGE = start
         config.KEYWORDS = keywords
@@ -316,6 +362,11 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         config.ENABLE_IP_PROXY = enable_ip_proxy_value
         config.IP_PROXY_POOL_COUNT = ip_proxy_pool_count
         config.IP_PROXY_PROVIDER_NAME = ip_proxy_provider_name
+        config.URLCHECK_MODE = urlcheck_mode
+        config.URLCHECK_ENABLE_COMMENTS = _to_bool(urlcheck_comments)
+        config.URLCHECK_EXTRACT_MODE = extract_mode
+        config.URLCHECK_INPUT_SOURCE = urlcheck_source
+        config.URLCHECK_INPUT_FILE = urlcheck_file
 
         # Set platform-specific ID lists for detail/creator mode
         if specified_id_list:
