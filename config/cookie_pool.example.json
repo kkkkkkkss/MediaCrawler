@@ -1,0 +1,21 @@
+{
+  "dy": [
+    {"id": "dy_01", "cookie": "sessionid=xxx; passport_csrf_token=yyy;", "note": "抖音账号1"},
+    {"id": "dy_02", "cookie": "sessionid=zzz; passport_csrf_token=www;", "note": "抖音账号2"}
+  ],
+  "bili": [
+    {"id": "bili_01", "cookie": "SESSDATA=xxx; bili_jct=yyy; DedeUserID=zzz;", "note": "B站账号1"}
+  ],
+  "ks": [
+    {"id": "ks_01", "cookie": "did=xxx; didv=yyy;", "note": "快手账号1"}
+  ],
+  "wb": [
+    {"id": "wb_01", "cookie": "SUBP=xxx; SUB=yyy; XSRF-TOKEN=zzz;", "note": "微博账号1"}
+  ],
+  "xhs": [
+    {"id": "xhs_01", "cookie": "a1=xxx; webId=yyy; web_session=zzz;", "note": "小红书账号1"}
+  ],
+  "toutiao": [
+    {"id": "tt_01", "cookie": "ttwid=xxx; msToken=yyy;", "note": "头条账号1"}
+  ]
+}

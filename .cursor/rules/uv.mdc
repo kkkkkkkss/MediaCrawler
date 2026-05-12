@@ -1,0 +1,6 @@
+---
+description: 
+alwaysApply: true
+---
+
+使用uv跑python而不是pip

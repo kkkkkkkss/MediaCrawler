@@ -1,0 +1,12 @@
+---
+alwaysApply: true
+---
+
+该项目设计mysql数据库的都直接填以下内容
+MYSQL_HOST=123.158.253.65
+MYSQL_PORT=30148
+MYSQL_USER=root
+MYSQL_PWD=syyq12WER45!@#!
+MYSQL_DB=db_sdga_report
+
+Redis用默认无密码的

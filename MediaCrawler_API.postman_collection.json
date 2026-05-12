@@ -1,0 +1,271 @@
+{
+  "info": {
+    "name": "MediaCrawler API",
+    "description": "MediaCrawler 全接口测试集合。\n\n使用前请创建环境变量：base_url=http://localhost:8888\n\n详细使用说明请参考 docs/Postman测试文档.md",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "base_url", "value": "http://localhost:8888"}
+  ],
+  "item": [
+    {
+      "name": "系统",
+      "description": "系统相关接口",
+      "item": [
+        {
+          "name": "01-健康检查",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/health",
+            "description": "检查API服务是否正常运行。返回 status=ok 表示正常。"
+          }
+        }
+      ]
+    },
+    {
+      "name": "链接检测",
+      "description": "URL有效性检测和指标提取接口",
+      "item": [
+        {
+          "name": "02-单链接检测（同步）",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/check/url",
+            "description": "检测单条URL，同步等待返回结果。\n\n修改方法：直接改 Body 中的 url 字段为你想检测的链接。\n\nmode可选值：both(默认)/validity/metrics",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://www.douyin.com/video/7628682927572997561\",\n  \"mode\": \"both\",\n  \"enable_comments\": false\n}"
+            }
+          }
+        },
+        {
+          "name": "03-批量URL检测（异步）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var resp = pm.response.json();",
+                  "if (resp.task_id) {",
+                  "  pm.environment.set('task_id', resp.task_id);",
+                  "  console.log('task_id saved:', resp.task_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/check/batch",
+            "description": "批量检测多条URL（异步）。\n\n【如何自定义检测的网址】\n直接修改 Body 中 urls 数组的内容即可！添加、删除、替换你想检测的链接。\n\n提交后返回 task_id，用 GET /task/{task_id} 轮询进度。",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"urls\": [\n    \"https://www.douyin.com/video/7628682927572997561\",\n    \"https://www.kuaishou.com/short-video/3xrenpyd68isk2q?authorId=3x25cscsbzw9bik\",\n    \"https://www.bilibili.com/video/BV1godYBUE3f\",\n    \"https://weibo.com/1987241375/QCIQEm6rM\",\n    \"https://www.toutiao.com/i7629519642230538787/\"\n  ],\n  \"mode\": \"both\",\n  \"enable_comments\": false\n}"
+            }
+          }
+        },
+        {
+          "name": "04-上传文件检测（异步）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var resp = pm.response.json();",
+                  "if (resp.task_id) {",
+                  "  pm.environment.set('task_id', resp.task_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/check/upload",
+            "description": "上传Excel/CSV/TXT文件批量检测。\n\n操作方法：Body→form-data，file字段选择本地文件。\n\n支持格式：.xlsx .csv .txt（txt每行一个URL）",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {"key": "file", "type": "file", "description": "选择要上传的文件(.xlsx/.csv/.txt)"},
+                {"key": "url_column", "value": "url", "type": "text", "description": "URL所在列名(Excel/CSV用)"},
+                {"key": "mode", "value": "both", "type": "text", "description": "检测模式: both/validity/metrics"},
+                {"key": "enable_comments", "value": "false", "type": "text", "description": "是否抓评论"}
+              ]
+            }
+          }
+        },
+        {
+          "name": "05-MySQL数据源检测（异步）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var resp = pm.response.json();",
+                  "if (resp.task_id) {",
+                  "  pm.environment.set('task_id', resp.task_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/check/mysql",
+            "description": "从MySQL数据库读取URL进行检测。\n\n【如何连接你自己的数据库】\n直接修改 Body 中的连接参数即可！改 host/port/user/password/database/table。\n\n无需修改后端代码，Postman里改参数就能连不同数据库。",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"host\": \"123.158.253.65\",\n  \"port\": 30148,\n  \"user\": \"root\",\n  \"password\": \"syyq12WER45!@#!\",\n  \"database\": \"db_sdga_report\",\n  \"table\": \"bigscreen_data_test\",\n  \"url_column\": \"url\",\n  \"mode\": \"both\",\n  \"batch_size\": 50\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "任务管理",
+      "description": "异步任务进度查询和结果下载",
+      "item": [
+        {
+          "name": "06-查询任务进度",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/task/{{task_id}}",
+            "description": "查询异步任务的执行进度。\n\nstatus含义：pending=排队中, running=执行中, completed=完成, failed=失败\n\n完成后可调用 /task/{id}/result 下载Excel。"
+          }
+        },
+        {
+          "name": "07-下载结果Excel",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/task/{{task_id}}/result",
+            "description": "下载任务完成后的检测结果Excel文件。\n\n注意：仅当任务status=completed时可下载。\n\nPostman中点 Send 后，在 Response 区域点 Save Response → Save to a file。"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cookie管理",
+      "description": "Cookie池的查看、添加、删除、重载",
+      "item": [
+        {
+          "name": "08-查看Cookie池(全部)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/cookies",
+            "description": "查看所有平台的Cookie及状态。\n\n返回 pool（Cookie列表）和 stats（统计信息）。"
+          }
+        },
+        {
+          "name": "09-查看Cookie池(指定平台)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/cookies?platform=dy",
+            "description": "只看某个平台的Cookie。\n\nplatform可选值: dy(抖音)/ks(快手)/bili(B站)/wb(微博)/toutiao(头条)"
+          }
+        },
+        {
+          "name": "10-手动添加Cookie",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/cookies/add",
+            "description": "手动添加一条Cookie。\n\n获取方法：浏览器登录→F12→Network→复制Cookie头的值→粘贴到cookie字段。",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"platform\": \"dy\",\n  \"cookie\": \"sessionid=你的session值; passport_csrf_token=你的token值;\",\n  \"note\": \"主号\"\n}"
+            }
+          }
+        },
+        {
+          "name": "11-删除Cookie",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/cookies/remove",
+            "description": "删除指定Cookie。\n\n先用 GET /cookies 查看所有Cookie的ID，再填入 cookie_id。",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"platform\": \"dy\",\n  \"cookie_id\": \"dy_01\"\n}"
+            }
+          }
+        },
+        {
+          "name": "12-重新加载Cookie池",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/cookies/reload",
+            "description": "从数据库/文件重新加载Cookie池到内存。\n\n当手动修改了数据库中的Cookie后，调用此接口刷新。"
+          }
+        }
+      ]
+    },
+    {
+      "name": "扫码登录",
+      "description": "自动打开浏览器扫码登录，Cookie自动存入系统",
+      "item": [
+        {
+          "name": "13-扫码登录-全平台串行",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var resp = pm.response.json();",
+                  "if (resp.cookie_id) {",
+                  "  pm.environment.set('session_id', resp.cookie_id);",
+                  "  console.log('session_id saved:', resp.cookie_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/cookies/scan/start?platform=all&note=批量扫码",
+            "description": "不指定platform或platform=all时，依次为所有平台（抖音→快手→B站→微博→头条）扫码。\n\n每个平台120秒超时，超时自动跳过下一个。\n\n扫码流程：\n1. 调用此接口→获取session_id\n2. 服务端自动打开浏览器\n3. GET /scan/qrcode/{id} 获取二维码截图\n4. 扫码完成后自动切换到下一个平台\n5. GET /scan/status/{id} 查看整体进度"
+          }
+        },
+        {
+          "name": "14-扫码登录-单平台",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var resp = pm.response.json();",
+                  "if (resp.cookie_id) {",
+                  "  pm.environment.set('session_id', resp.cookie_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/cookies/scan/start?platform=dy&note=抖音扫码",
+            "description": "只为指定平台扫码。\n\nplatform可选值: dy/ks/bili/wb/toutiao/xhs\n\n修改URL中的platform参数即可切换平台。"
+          }
+        },
+        {
+          "name": "15-获取扫码二维码截图",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/cookies/scan/qrcode/{{session_id}}",
+            "description": "获取当前正在扫码的平台的页面截图（base64编码的PNG）。\n\n将 qrcode_base64 字段的值解码为图片展示给用户扫码。\n\n多平台模式下会显示当前是哪个平台。"
+          }
+        },
+        {
+          "name": "16-轮询扫码状态",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/cookies/scan/status/{{session_id}}",
+            "description": "查看扫码登录的整体进度。\n\n返回字段说明：\n- current_platform: 当前正在扫码的平台\n- completed: 已成功的平台列表\n- skipped: 超时跳过的平台\n- status: starting/waiting/success/timeout/all_done"
+          }
+        }
+      ]
+    }
+  ]
+}

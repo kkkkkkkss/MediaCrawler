@@ -1,26 +1,24 @@
-# 全局基础配置
-# 所有平台共享的通用参数；各平台专属配置在 config/{platform}_config.py
+# Repository: https://github.com/NanmiCoder/MediaCrawler/blob/main/config/base_config.py
+# GitHub: https://github.com/NanmiCoder
 
 # ==================== 基础配置 ====================
 # 爬取目标平台，可选值：xhs(小红书)|dy(抖音)|ks(快手)|bili(B站)|wb(微博)|tieba(贴吧)|zhihu(知乎)
-# 注意：url_check 模式下此项仅用作 CDP user_data_dir 的默认值，
-#       实际平台由 URL 自动识别，无需手动修改
 PLATFORM = "xhs"
 
 # 是否使用海外版小红书 (rednote.com)
+# 开启后 API 接口切换为 webapi.rednote.com，Cookie 域切换为 .rednote.com
 XHS_INTERNATIONAL = False
 
-# 关键词搜索配置（search 模式用），多个关键词用英文逗号分隔
+# 关键词搜索配置，多个关键词用**英文逗号**分隔
 KEYWORDS = "编程副业,编程兼职"
 
-# 登录方式：qrcode(二维码)|phone(手机号)|cookie(Cookie字符串)|cookie_pool(Cookie池自动轮换)
-LOGIN_TYPE = "cookie_pool"
+# 登录方式，可选值：qrcode(二维码登录)|phone(手机号登录)|cookie(直接使用Cookie登录)
+LOGIN_TYPE = "qrcode"
 
-# 登录Cookie，LOGIN_TYPE=cookie 时填写
+# 登录Cookie，当 LOGIN_TYPE=cookie 时，此处填写账号有效Cookie
 COOKIES = ""
 
-# 爬取业务类型：search(关键词搜索)|detail(帖子详情)|creator(创作者主页)
-# url_check 模式通过 --type url_check 指定，此项不生效
+# 爬取业务类型，可选值：search(关键词搜索)|detail(帖子详情)|creator(创作者主页数据)
 CRAWLER_TYPE = "detail"
 
 # ==================== IP代理配置（防封禁） ====================
@@ -36,7 +34,7 @@ IP_PROXY_PROVIDER_NAME = "kuaidaili"
 # ==================== 基础浏览器配置 ====================
 # True：无头模式（不打开浏览器窗口，后台运行）
 # False：打开可视化浏览器窗口（登录触发风控时，必须设为False手动过验证）
-HEADLESS = True
+HEADLESS = False
 
 # 是否保存登录状态（持久化Cookie，下次启动免重新登录）
 SAVE_LOGIN_STATE = True
@@ -70,7 +68,7 @@ AUTO_CLOSE_BROWSER = True
 # ==================== 数据保存配置 ====================
 # 数据保存格式，支持：csv/db/json/jsonl/sqlite/excel/postgres
 # 推荐：db（自带数据去重功能）
-SAVE_DATA_OPTION = "db"
+SAVE_DATA_OPTION = "jsonl"
 
 # 数据保存路径，为空则默认保存到项目根目录的 data 文件夹
 SAVE_DATA_PATH = ""
@@ -97,7 +95,7 @@ ENABLE_GET_MEIDAS = False
 ENABLE_GET_COMMENTS = False
 
 # 单个视频/帖子 最大爬取一级评论数量
-CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 30
+CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 10
 
 # 是否爬取二级评论（评论的回复），默认关闭
 # 旧版数据库需手动新增字段才能存储二级评论
@@ -140,7 +138,7 @@ URLCHECK_BATCH_SIZE = 15
 URLCHECK_ENABLE_COMMENTS = False
 
 # URL检查模式下，单个作品最大爬取评论数
-URLCHECK_MAX_COMMENTS = 30
+URLCHECK_MAX_COMMENTS = 15
 
 # URL检查模式的输入来源："db"(从外部MySQL读取) | "file"(从本地txt文件读取)
 URLCHECK_INPUT_SOURCE = "db"
@@ -148,69 +146,14 @@ URLCHECK_INPUT_SOURCE = "db"
 # 当 URLCHECK_INPUT_SOURCE="file" 时，指定URL文件路径（每行一个URL）
 URLCHECK_INPUT_FILE = ""
 
-# ==================== 零互动检测优化（三层兜底）配置 ====================
-# 各平台基准帖子：用于验证平台接口是否正常
-# 当帖子转赞评全为 0 且 author/title 也为空时，用基准帖子二次验证
-# 请定期检查并替换为确认有效的高热帖子 URL + content_id
-PLATFORM_BENCHMARK_POSTS = {
-    "dy": {"url": "https://www.douyin.com/video/7628682927572997561", "content_id": "7628682927572997561"},
-    "ks": {"url": "https://www.kuaishou.com/short-video/3xrenpyd68isk2q", "content_id": "3xrenpyd68isk2q"},
-    "bili": {"url": "https://www.bilibili.com/video/BV1godYBUE3f", "content_id": "BV1godYBUE3f"},
-    "wb": {"url": "https://weibo.com/1195242865/5. ", "content_id": "5131010497826733"},
-    "toutiao": {"url": "https://www.toutiao.com/article/7489803498200687115", "content_id": "7489803498200687115"},
-    "xhs": {"url": "https://www.xiaohongshu.com/explore/682f2c4f000000000b03bf8d", "content_id": "682f2c4f000000000b03bf8d"},
-}
-
-# 基准帖子检测结果缓存时间（秒），默认 30 分钟
-BENCHMARK_CACHE_TTL_SECONDS = 1800
-
 # ==================== 指标提取方式配置 ====================
-# 提取模式开关：
-#   - "hardcode_first" (默认推荐) → 硬编码优先，指标不足时自动调 AI 补充
-#   - "ai_only"                   → 跳过硬编码，直接调 AI（失败回退硬编码）
-#   - "hardcode_only"             → 仅硬编码，不调 AI
-URLCHECK_EXTRACT_MODE = "hardcode_first"
+# 提取模式开关：ai(调AI解析完整接口JSON) | hardcode(硬编码路径直接取值)
+# 默认 ai — 把完整接口内容传给AI做字段映射推断
+URLCHECK_EXTRACT_MODE = "ai"
 
 # ==================== AI字段映射配置（火山引擎豆包） ====================
 # 火山引擎Doubao AI模型名称（API兼容OpenAI格式，密钥从.env文件读取）
-# DOUBAO_MODEL = "doubao-seed-2-0-pro-260215"
-
-# ==================== 无人值守配置（Cookie池 + 异常自动切换） ====================
-# 启用后跳过浏览器扫码登录，直接用预置 Cookie 访问各平台 API
-ENABLE_COOKIE_POOL = True
-
-# Cookie池来源："file"(本地JSON) | "db"(外部MySQL cookie_pool 表)
-COOKIE_POOL_SOURCE = "db"
-
-# 本地 Cookie 池文件（JSON 格式，按平台存储多组 Cookie）
-COOKIE_POOL_FILE = "config/cookie_pool.json"
-
-# Cookie 失效后是否自动切换到下一个
-COOKIE_AUTO_SWITCH = True
-
-# 同一 Cookie 累计致命失败（获取不到接口数据）多少次后标记为失效
-# 建议设为 2：获取不到接口数据基本可确认 Cookie 失效
-COOKIE_MAX_FAILURES = 2
-
-# ==================== 回调机制配置 ====================
-# 全局回调开关（任务完成后自动 POST 结果到回调地址）
-CALLBACK_ENABLED = False
-
-# 全局默认回调地址（任务级 callback_url 可覆盖此配置）
-CALLBACK_URL = ""
-
-# 回调最大重试次数
-CALLBACK_MAX_RETRIES = 3
-
-# 回调重试间隔（秒），依次使用
-CALLBACK_RETRY_INTERVALS = [5, 15, 30]
-
-# ==================== IP代理增强配置 ====================
-# 注意：ENABLE_IP_PROXY 在上方基础配置中已定义
-# 以下为 url_check 模式补充的代理控制
-
-# 单个 Cookie/IP 连续请求失败多少次后自动切换代理
-PROXY_SWITCH_THRESHOLD = 3
+DOUBAO_MODEL = "doubao-seed-2-0-pro-260215"
 
 # ==================== 导入各平台专属配置 ====================
 from .bilibili_config import *

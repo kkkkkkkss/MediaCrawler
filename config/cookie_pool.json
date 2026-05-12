@@ -1,0 +1,122 @@
+{
+  "dy": [
+    {
+      "id": "dy_01",
+      "cookie": "sessionid=zzz; passport_csrf_token=www;",
+      "note": "抖音假Cookie-用于测试失败计数",
+      "valid": true,
+      "fatal_count": 1
+    },
+    {
+      "id": "dy_02",
+      "cookie": "__ac_nonce=069fad03700f432065383;__ac_signature=_02B4Z6wo00f01jiO5QAAAIDCtsOTN7hH4v44rsGAAOfn13;enter_pc_once=1;UIFID_TEMP=1095a6dff7695ad7d7bcf6d11c9f5d2a106aea3524d1e5d99f3ea5d6bdd8961772dff52c097bde0322a93452ed05edabd0615e2b579b012905778262cc69e2438141f275bbc0c8ec463b1d75217e5dbb;x-web-secsdk-uid=e6d19282-7076-48fe-8d9e-bf1272ae0acd;s_v_web_id=verify_motm2rj1_Mvy0hAG4_ApyT_4a5H_AtiX_XL2AOSXXlwmh;=douyin.com;device_web_cpu_core=16;device_web_memory_size=8;architecture=amd64;is_support_rtm_web_ts=1;hevc_supported=true;dy_swidth=1920;dy_sheight=1080;stream_recommend_feed_params=%22%7B%5C%22cookie_enabled%5C%22%3Atrue%2C%5C%22screen_width%5C%22%3A1920%2C%5C%22screen_height%5C%22%3A1080%2C%5C%22browser_online%5C%22%3Atrue%2C%5C%22cpu_core_num%5C%22%3A16%2C%5C%22device_memory%5C%22%3A8%2C%5C%22downlink%5C%22%3A10%2C%5C%22effective_type%5C%22%3A%5C%224g%5C%22%2C%5C%22round_trip_time%5C%22%3A100%7D%22;strategyABtestKey=%221778044989.785%22;fpk1=U2FsdGVkX19DctYalHFpEQYwC3yne0sUkzYNh6wuTeJ8GBx8vRaIiIjO22wCUvxUKnSt1lbdh5DR5Kvdzak4cQ==;fpk2=7c73ef5b8d3235ae0606f2e84e457ff5;passport_csrf_token=233225a8f6f41e653c72ae5d73fe2ce1;passport_csrf_token_default=233225a8f6f41e653c72ae5d73fe2ce1;is_dash_user=1;biz_trace_id=dcb7c31f;ttwid=1%7CY0iTOi6VzNqYIGDjgqITzRbTs3HMWvDX7-611er08pc%7C1778044991%7C4d15fc447a3cd1b7f859b7010f0de71c4e2fb2984d93b716616ff57b3f89a310;home_can_add_dy_2_desktop=%221%22;bd_ticket_guard_client_data=eyJiZC10aWNrZXQtZ3VhcmQtdmVyc2lvbiI6MiwiYmQtdGlja2V0LWd1YXJkLWl0ZXJhdGlvbi12ZXJzaW9uIjoxLCJiZC10aWNrZXQtZ3VhcmQtcmVlLXB1YmxpYy1rZXkiOiJCRXY4Mmp6TGI4V3BDOUFDc3MwWEZ3aFZXbm9Bd2pOL0M5L2llVDNRbjNsUW5zTjZLMnJ6cExSZGdpTTBXMEExcml4WUJJUFpldnhKdzUwNjUzRCt4bUU9IiwiYmQtdGlja2V0LWd1YXJkLXdlYi12ZXJzaW9uIjoyfQ%3D%3D;bd_ticket_guard_client_web_domain=2;sdk_source_info=7e276470716a68645a606960273f276364697660272927676c715a6d6069756077273f276364697660272927666d776a68605a607d71606b766c6a6b5a7666776c7571273f275e58272927666a6b766a69605a696c6061273f27636469766027292762696a6764695a7364776c6467696076273f275e592772606761776c7360775927582729277672715a646971273f2763646976602729277f6b5a666475273f2763646976602729276d6a6e5a6b6a716c273f2763646976602729276c6b6f5a7f6367273f27636469766027292771273f2733323c343c3c3131353d323234272927676c715a75776a716a666a69273f2763646976602778;bit_env=I_KVEQ32ibkRElP1NnHnZ93DNfDSrZeLwcYjo7XYOz-3CFO_OQqInOsuSKANnaC0Asw3ONxzIi1Lj9CmD2tGjbK5Y9GJh-b63B_tReGZaBb1OhuD_vp5SVJQY-0XdctEOb_FdDbCWrKnTzDF5RxKsUvpmL_k0hD5pk0IpVwZNbqrGMAL6JwGZyHnN5-3lAFJ-1mSVQ0w0Ugah51CpG82CfmL_PDcEB55_WQraKgZfp2oDrX6dDaarvHTE0Yotr_c4JrSez_h3V7PADSlSVU2-Xu8q189rEcxduRzqH6J6S3xapLijCc7gJE0ea16KO18h48Zaig_tcm6Qh2cea0riWfpZjngVxnz3jzU1OYvqDecKy5_ghimXOtXeBsfSceFMgSX6EZlzHW7H31RdACfYvYaTs6BiYBs7TMR5xSkSc1B8cIYGnXA3CHX-ow1P6k__D8CSqpsV8IQOEKD5lMkbXiqNABK5a4WYjFBMn4ofQadVhGNCYWy72WeQONZpQdI;gulu_source_res=eyJwX2luIjoiMTM2MDYwZmNhNGM1MWJkZTdhZTRiYjY1Yzk1ZWNhZTRiNjI3MzcyYTk3NDlhZmY4MTBiNThiZjcwZDZlZjZjNSJ9;passport_auth_mix_state=ikdgt3o4bsb09xh0wem3d4rx1uwhjtru3q49lgpmvokngecd;passport_assist_user=CkEzQ1ETmYZi0qmzs1UTayLfNORAH9vN00ziTNIb3QCGhzcVfFcGgWU-W72w-rE38TO2HJvJBdnPWebW3mszXYwGzhpKCjwAAAAAAAAAAAAAUGPB8Unn9hXPbNfmPyyTmS1qWdYY781KgAJDJ8GNVLDmxZXNN-Yx-GN4nO50Q0SOgkwQ1tqQDhiJr9ZUIAEiAQNBLKsI;n_mh=wuuoirY1pSP-at4i7Ad2A6GMFjzy2M38j9JKVfuQLDs;sid_guard=c780941caaa2bbc6b4f8e0e8e6d95592%7C1778045009%7C5184000%7CSun%2C+05-Jul-2026+05%3A23%3A29+GMT;uid_tt=3ff939cdfc81e224c6bb45b1305d83f5;uid_tt_ss=3ff939cdfc81e224c6bb45b1305d83f5;sid_tt=c780941caaa2bbc6b4f8e0e8e6d95592;sessionid=c780941caaa2bbc6b4f8e0e8e6d95592;sessionid_ss=c780941caaa2bbc6b4f8e0e8e6d95592;session_tlb_tag=sttt%7C13%7Cx4CUHKqiu8a0-ODo5tlVkv________-wkxZGPl2xANuCUfARJ-oEK5elKCZk7PykvrlqNJXwDq4%3D;is_staff_user=false;has_biz_token=false;sid_ucp_v1=1.0.0-KDNmNmY3ODlkZDc0OGFkMjdhMmQ1MTA1ZjQxOTNmYWFmNTllNDU2NDcKIQjT-oGK9_XHAhDRoOvPBhjvMSAMMPG43P8FOAdA9AdIBBoCbGYiIGM3ODA5NDFjYWFhMmJiYzZiNGY4ZTBlOGU2ZDk1NTky;ssid_ucp_v1=1.0.0-KDNmNmY3ODlkZDc0OGFkMjdhMmQ1MTA1ZjQxOTNmYWFmNTllNDU2NDcKIQjT-oGK9_XHAhDRoOvPBhjvMSAMMPG43P8FOAdA9AdIBBoCbGYiIGM3ODA5NDFjYWFhMmJiYzZiNGY4ZTBlOGU2ZDk1NTky;_bd_ticket_crypt_cookie=e56fa67989414c0889c9b2f98b4e1e00;__security_mc_1_s_sdk_sign_data_key_web_protect=5996c0ea-4f90-96ca;__security_mc_1_s_sdk_cert_key=bec31bea-4c4b-a75c;__security_mc_1_s_sdk_crypt_sdk=badf456a-46e0-887b;__security_server_data_status=1;bd_ticket_guard_client_data_v2=eyJyZWVfcHVibGljX2tleSI6IkJFdjgyanpMYjhXcEM5QUNzczBYRndoVldub0F3ak4vQzkvaWVUM1FuM2xRbnNONksycnpwTFJkZ2lNMFcwQTFyaXhZQklQWmV2eEp3NTA2NTNEK3htRT0iLCJ0c19zaWduIjoidHMuMi40Mzc0YWM0NTQwNWFmNWVkZjE4MWQwODNmOGNiZjJkZjYzMTFlOGNmZTU3ZGRmZjNkNTMxMjBmM2U1YmVjZWMwYzRmYmU4N2QyMzE5Y2YwNTMxODYyNGNlZGExNDkxMWNhNDA2ZGVkYmViZWRkYjJlMzBmY2U4ZDRmYTAyNTc1ZCIsInJlcV9jb250ZW50Ijoic2VjX3RzIiwicmVxX3NpZ24iOiJ3cGdQNnVoWGxwK2J5aDJuKzRhZ0xla3BVS3FoeHFFOStlMHNzeDcrRDhvPSIsInNlY190cyI6IiNicU1Nbkl1RjFaWWdlZWFjdlVwTVNVUWlTaGdVWjNyMjBtWTNvMFRJOTlRK0ZKeFpucjhjRk5OWWVxWDEifQ%3D%3D;login_time=1778045010221;IsDouyinActive=false;publish_badge_show_info=%220%2C0%2C0%2C1778045010609%22;DiscoverFeedExposedAd=%7B%7D;odin_tt=cda1282b468bd29d3183c0ba59dc05261b9e38d823c77bec19a4b66034b7b74653d8f684273cc217062437e545075a23b9461638e81467957769db1ab1c3b560;UIFID=1095a6dff7695ad7d7bcf6d11c9f5d2a106aea3524d1e5d99f3ea5d6bdd8961772dff52c097bde0322a93452ed05edabe94d9d66ddbc2d1146d1b5424c6ee5ee03038643a57f68f5069da92a564ff26a0594e89670673c9582e52045b4fd7158a602e6726790fd2a4c205bfdd024033d7c214507e6fa03af36898cdee210cb2951b4df0980527848e790389ebde7897b7f7011adeb9b0fa398b549c2bb0c4e76",
+      "note": "扫码登录 2026-05-06 13:23:31",
+      "valid": true,
+      "fatal_count": 0,
+      "created_at": "2026-05-06 13:23:31"
+    },
+    {
+      "id": "dy_03",
+      "cookie": "enter_pc_once=1;UIFID_TEMP=1095a6dff7695ad7d7bcf6d11c9f5d2a106aea3524d1e5d99f3ea5d6bdd8961772dff52c097bde0322a93452ed05edabd0615e2b579b012905778262cc69e2438141f275bbc0c8ec463b1d75217e5dbb;s_v_web_id=verify_motm2rj1_Mvy0hAG4_ApyT_4a5H_AtiX_XL2AOSXXlwmh;hevc_supported=true;dy_swidth=1920;dy_sheight=1080;stream_recommend_feed_params=%22%7B%5C%22cookie_enabled%5C%22%3Atrue%2C%5C%22screen_width%5C%22%3A1920%2C%5C%22screen_height%5C%22%3A1080%2C%5C%22browser_online%5C%22%3Atrue%2C%5C%22cpu_core_num%5C%22%3A16%2C%5C%22device_memory%5C%22%3A8%2C%5C%22downlink%5C%22%3A10%2C%5C%22effective_type%5C%22%3A%5C%224g%5C%22%2C%5C%22round_trip_time%5C%22%3A100%7D%22;strategyABtestKey=%221778044989.785%22;fpk1=U2FsdGVkX19DctYalHFpEQYwC3yne0sUkzYNh6wuTeJ8GBx8vRaIiIjO22wCUvxUKnSt1lbdh5DR5Kvdzak4cQ==;fpk2=7c73ef5b8d3235ae0606f2e84e457ff5;passport_csrf_token=233225a8f6f41e653c72ae5d73fe2ce1;passport_csrf_token_default=233225a8f6f41e653c72ae5d73fe2ce1;is_dash_user=1;ttwid=1%7CY0iTOi6VzNqYIGDjgqITzRbTs3HMWvDX7-611er08pc%7C1778044991%7C4d15fc447a3cd1b7f859b7010f0de71c4e2fb2984d93b716616ff57b3f89a310;home_can_add_dy_2_desktop=%221%22;bd_ticket_guard_client_data=eyJiZC10aWNrZXQtZ3VhcmQtdmVyc2lvbiI6MiwiYmQtdGlja2V0LWd1YXJkLWl0ZXJhdGlvbi12ZXJzaW9uIjoxLCJiZC10aWNrZXQtZ3VhcmQtcmVlLXB1YmxpYy1rZXkiOiJCRXY4Mmp6TGI4V3BDOUFDc3MwWEZ3aFZXbm9Bd2pOL0M5L2llVDNRbjNsUW5zTjZLMnJ6cExSZGdpTTBXMEExcml4WUJJUFpldnhKdzUwNjUzRCt4bUU9IiwiYmQtdGlja2V0LWd1YXJkLXdlYi12ZXJzaW9uIjoyfQ%3D%3D;bd_ticket_guard_client_web_domain=2;passport_assist_user=CkEzQ1ETmYZi0qmzs1UTayLfNORAH9vN00ziTNIb3QCGhzcVfFcGgWU-W72w-rE38TO2HJvJBdnPWebW3mszXYwGzhpKCjwAAAAAAAAAAAAAUGPB8Unn9hXPbNfmPyyTmS1qWdYY781KgAJDJ8GNVLDmxZXNN-Yx-GN4nO50Q0SOgkwQ1tqQDhiJr9ZUIAEiAQNBLKsI;n_mh=wuuoirY1pSP-at4i7Ad2A6GMFjzy2M38j9JKVfuQLDs;sid_guard=c780941caaa2bbc6b4f8e0e8e6d95592%7C1778045009%7C5184000%7CSun%2C+05-Jul-2026+05%3A23%3A29+GMT;uid_tt=3ff939cdfc81e224c6bb45b1305d83f5;uid_tt_ss=3ff939cdfc81e224c6bb45b1305d83f5;sid_tt=c780941caaa2bbc6b4f8e0e8e6d95592;sessionid=c780941caaa2bbc6b4f8e0e8e6d95592;sessionid_ss=c780941caaa2bbc6b4f8e0e8e6d95592;session_tlb_tag=sttt%7C13%7Cx4CUHKqiu8a0-ODo5tlVkv________-wkxZGPl2xANuCUfARJ-oEK5elKCZk7PykvrlqNJXwDq4%3D;is_staff_user=false;has_biz_token=false;sid_ucp_v1=1.0.0-KDNmNmY3ODlkZDc0OGFkMjdhMmQ1MTA1ZjQxOTNmYWFmNTllNDU2NDcKIQjT-oGK9_XHAhDRoOvPBhjvMSAMMPG43P8FOAdA9AdIBBoCbGYiIGM3ODA5NDFjYWFhMmJiYzZiNGY4ZTBlOGU2ZDk1NTky;ssid_ucp_v1=1.0.0-KDNmNmY3ODlkZDc0OGFkMjdhMmQ1MTA1ZjQxOTNmYWFmNTllNDU2NDcKIQjT-oGK9_XHAhDRoOvPBhjvMSAMMPG43P8FOAdA9AdIBBoCbGYiIGM3ODA5NDFjYWFhMmJiYzZiNGY4ZTBlOGU2ZDk1NTky;_bd_ticket_crypt_cookie=e56fa67989414c0889c9b2f98b4e1e00;__security_mc_1_s_sdk_sign_data_key_web_protect=5996c0ea-4f90-96ca;__security_mc_1_s_sdk_cert_key=bec31bea-4c4b-a75c;__security_mc_1_s_sdk_crypt_sdk=badf456a-46e0-887b;__security_server_data_status=1;bd_ticket_guard_client_data_v2=eyJyZWVfcHVibGljX2tleSI6IkJFdjgyanpMYjhXcEM5QUNzczBYRndoVldub0F3ak4vQzkvaWVUM1FuM2xRbnNONksycnpwTFJkZ2lNMFcwQTFyaXhZQklQWmV2eEp3NTA2NTNEK3htRT0iLCJ0c19zaWduIjoidHMuMi40Mzc0YWM0NTQwNWFmNWVkZjE4MWQwODNmOGNiZjJkZjYzMTFlOGNmZTU3ZGRmZjNkNTMxMjBmM2U1YmVjZWMwYzRmYmU4N2QyMzE5Y2YwNTMxODYyNGNlZGExNDkxMWNhNDA2ZGVkYmViZWRkYjJlMzBmY2U4ZDRmYTAyNTc1ZCIsInJlcV9jb250ZW50Ijoic2VjX3RzIiwicmVxX3NpZ24iOiJ3cGdQNnVoWGxwK2J5aDJuKzRhZ0xla3BVS3FoeHFFOStlMHNzeDcrRDhvPSIsInNlY190cyI6IiNicU1Nbkl1RjFaWWdlZWFjdlVwTVNVUWlTaGdVWjNyMjBtWTNvMFRJOTlRK0ZKeFpucjhjRk5OWWVxWDEifQ%3D%3D;login_time=1778045010221;IsDouyinActive=false;publish_badge_show_info=%220%2C0%2C0%2C1778045010609%22;DiscoverFeedExposedAd=%7B%7D;odin_tt=cda1282b468bd29d3183c0ba59dc05261b9e38d823c77bec19a4b66034b7b74653d8f684273cc217062437e545075a23b9461638e81467957769db1ab1c3b560;UIFID=1095a6dff7695ad7d7bcf6d11c9f5d2a106aea3524d1e5d99f3ea5d6bdd8961772dff52c097bde0322a93452ed05edabe94d9d66ddbc2d1146d1b5424c6ee5ee03038643a57f68f5069da92a564ff26a0594e89670673c9582e52045b4fd7158a602e6726790fd2a4c205bfdd024033d7c214507e6fa03af36898cdee210cb2951b4df0980527848e790389ebde7897b7f7011adeb9b0fa398b549c2bb0c4e76;__ac_nonce=069faeeeb0074077334a;__ac_signature=_02B4Z6wo00f01HLnOQQAAIDA.KpPMYc9IsByxx2AAHVK2c;=douyin.com",
+      "note": "扫码登录 2026-05-06 15:34:05",
+      "valid": true,
+      "fatal_count": 0,
+      "created_at": "2026-05-06 15:34:05"
+    },
+    {
+      "id": "dy_04",
+      "cookie": "enter_pc_once=1;UIFID_TEMP=1095a6dff7695ad7d7bcf6d11c9f5d2a106aea3524d1e5d99f3ea5d6bdd8961772dff52c097bde0322a93452ed05edabd0615e2b579b012905778262cc69e2438141f275bbc0c8ec463b1d75217e5dbb;s_v_web_id=verify_motm2rj1_Mvy0hAG4_ApyT_4a5H_AtiX_XL2AOSXXlwmh;hevc_supported=true;dy_swidth=1920;dy_sheight=1080;stream_recommend_feed_params=%22%7B%5C%22cookie_enabled%5C%22%3Atrue%2C%5C%22screen_width%5C%22%3A1920%2C%5C%22screen_height%5C%22%3A1080%2C%5C%22browser_online%5C%22%3Atrue%2C%5C%22cpu_core_num%5C%22%3A16%2C%5C%22device_memory%5C%22%3A8%2C%5C%22downlink%5C%22%3A10%2C%5C%22effective_type%5C%22%3A%5C%224g%5C%22%2C%5C%22round_trip_time%5C%22%3A100%7D%22;strategyABtestKey=%221778044989.785%22;fpk1=U2FsdGVkX19DctYalHFpEQYwC3yne0sUkzYNh6wuTeJ8GBx8vRaIiIjO22wCUvxUKnSt1lbdh5DR5Kvdzak4cQ==;fpk2=7c73ef5b8d3235ae0606f2e84e457ff5;passport_csrf_token=233225a8f6f41e653c72ae5d73fe2ce1;passport_csrf_token_default=233225a8f6f41e653c72ae5d73fe2ce1;is_dash_user=1;bd_ticket_guard_client_web_domain=2;passport_assist_user=CkEzQ1ETmYZi0qmzs1UTayLfNORAH9vN00ziTNIb3QCGhzcVfFcGgWU-W72w-rE38TO2HJvJBdnPWebW3mszXYwGzhpKCjwAAAAAAAAAAAAAUGPB8Unn9hXPbNfmPyyTmS1qWdYY781KgAJDJ8GNVLDmxZXNN-Yx-GN4nO50Q0SOgkwQ1tqQDhiJr9ZUIAEiAQNBLKsI;n_mh=wuuoirY1pSP-at4i7Ad2A6GMFjzy2M38j9JKVfuQLDs;sid_guard=c780941caaa2bbc6b4f8e0e8e6d95592%7C1778045009%7C5184000%7CSun%2C+05-Jul-2026+05%3A23%3A29+GMT;uid_tt=3ff939cdfc81e224c6bb45b1305d83f5;uid_tt_ss=3ff939cdfc81e224c6bb45b1305d83f5;sid_tt=c780941caaa2bbc6b4f8e0e8e6d95592;sessionid=c780941caaa2bbc6b4f8e0e8e6d95592;sessionid_ss=c780941caaa2bbc6b4f8e0e8e6d95592;session_tlb_tag=sttt%7C13%7Cx4CUHKqiu8a0-ODo5tlVkv________-wkxZGPl2xANuCUfARJ-oEK5elKCZk7PykvrlqNJXwDq4%3D;is_staff_user=false;has_biz_token=false;sid_ucp_v1=1.0.0-KDNmNmY3ODlkZDc0OGFkMjdhMmQ1MTA1ZjQxOTNmYWFmNTllNDU2NDcKIQjT-oGK9_XHAhDRoOvPBhjvMSAMMPG43P8FOAdA9AdIBBoCbGYiIGM3ODA5NDFjYWFhMmJiYzZiNGY4ZTBlOGU2ZDk1NTky;ssid_ucp_v1=1.0.0-KDNmNmY3ODlkZDc0OGFkMjdhMmQ1MTA1ZjQxOTNmYWFmNTllNDU2NDcKIQjT-oGK9_XHAhDRoOvPBhjvMSAMMPG43P8FOAdA9AdIBBoCbGYiIGM3ODA5NDFjYWFhMmJiYzZiNGY4ZTBlOGU2ZDk1NTky;_bd_ticket_crypt_cookie=e56fa67989414c0889c9b2f98b4e1e00;__security_mc_1_s_sdk_sign_data_key_web_protect=5996c0ea-4f90-96ca;__security_mc_1_s_sdk_cert_key=bec31bea-4c4b-a75c;__security_mc_1_s_sdk_crypt_sdk=badf456a-46e0-887b;__security_server_data_status=1;login_time=1778045010221;publish_badge_show_info=%220%2C0%2C0%2C1778045010609%22;DiscoverFeedExposedAd=%7B%7D;UIFID=1095a6dff7695ad7d7bcf6d11c9f5d2a106aea3524d1e5d99f3ea5d6bdd8961772dff52c097bde0322a93452ed05edabe94d9d66ddbc2d1146d1b5424c6ee5ee03038643a57f68f5069da92a564ff26a0594e89670673c9582e52045b4fd7158a602e6726790fd2a4c205bfdd024033d7c214507e6fa03af36898cdee210cb2951b4df0980527848e790389ebde7897b7f7011adeb9b0fa398b549c2bb0c4e76;__ac_nonce=069faeeeb0074077334a;__ac_signature=_02B4Z6wo00f01HLnOQQAAIDA.KpPMYc9IsByxx2AAHVK2c;=douyin.com;device_web_cpu_core=16;device_web_memory_size=8;architecture=amd64;is_support_rtm_web_ts=1;IsDouyinActive=true;home_can_add_dy_2_desktop=%220%22;SelfTabRedDotControl=%5B%7B%22id%22%3A%227568869216734644278%22%2C%22u%22%3A199%2C%22c%22%3A0%7D%2C%7B%22id%22%3A%227450831488004425765%22%2C%22u%22%3A74%2C%22c%22%3A0%7D%2C%7B%22id%22%3A%227602287036401190912%22%2C%22u%22%3A33%2C%22c%22%3A0%7D%2C%7B%22id%22%3A%227080437149513992229%22%2C%22u%22%3A45%2C%22c%22%3A0%7D%2C%7B%22id%22%3A%227554582464137299995%22%2C%22u%22%3A235%2C%22c%22%3A0%7D%5D;FOLLOW_NUMBER_YELLOW_POINT_INFO=%22MS4wLjABAAAAeagajXPwSa3lKLnIb6uBF7_17_v0pUVrKIcBynAt8MT7Ia0C6wSdDq9bpc3kW2NW%2F1778083200000%2F0%2F1778054510104%2F0%22;bd_ticket_guard_client_data=eyJiZC10aWNrZXQtZ3VhcmQtdmVyc2lvbiI6MiwiYmQtdGlja2V0LWd1YXJkLWl0ZXJhdGlvbi12ZXJzaW9uIjoxLCJiZC10aWNrZXQtZ3VhcmQtcmVlLXB1YmxpYy1rZXkiOiJCRXY4Mmp6TGI4V3BDOUFDc3MwWEZ3aFZXbm9Bd2pOL0M5L2llVDNRbjNsUW5zTjZLMnJ6cExSZGdpTTBXMEExcml4WUJJUFpldnhKdzUwNjUzRCt4bUU9IiwiYmQtdGlja2V0LWd1YXJkLXdlYi12ZXJzaW9uIjoyfQ%3D%3D;bd_ticket_guard_client_data_v2=eyJyZWVfcHVibGljX2tleSI6IkJFdjgyanpMYjhXcEM5QUNzczBYRndoVldub0F3ak4vQzkvaWVUM1FuM2xRbnNONksycnpwTFJkZ2lNMFcwQTFyaXhZQklQWmV2eEp3NTA2NTNEK3htRT0iLCJ0c19zaWduIjoidHMuMi40Mzc0YWM0NTQwNWFmNWVkZjE4MWQwODNmOGNiZjJkZjYzMTFlOGNmZTU3ZGRmZjNkNTMxMjBmM2U1YmVjZWMwYzRmYmU4N2QyMzE5Y2YwNTMxODYyNGNlZGExNDkxMWNhNDA2ZGVkYmViZWRkYjJlMzBmY2U4ZDRmYTAyNTc1ZCIsInJlcV9jb250ZW50Ijoic2VjX3RzIiwicmVxX3NpZ24iOiJtV0NsYnZHUzJ1bzd6d1o3d0NwUHVaMDMzRURsWVNudmYwT29XOVNSNkVnPSIsInNlY190cyI6IiNwczBud1R6RUI3R1RCa0VGTlRMQkMyTGxWVTlOa2pwbzJpaHFpaVl2Y0VMZ0tjbGVqY0poSHNYZHNwb3EifQ%3D%3D;odin_tt=d825abac3126dc24527e40247dc44737c9740a20331e3cef46ac995490f15425321f26688b7b7d0314de2fb1fc30188c9450eb527c32eb7ad0b82d007a431ae6;ttwid=1%7CY0iTOi6VzNqYIGDjgqITzRbTs3HMWvDX7-611er08pc%7C1778054512%7C5bb45bc5aded3f393c757ea938e0dc223efc696bba10a5f3e21fd01633364989;biz_trace_id=85ced77d;sdk_source_info=7e276470716a68645a606960273f276364697660272927676c715a6d6069756077273f276364697660272927666d776a68605a607d71606b766c6a6b5a7666776c7571273f275e58272927666a6b766a69605a696c6061273f27636469766027292762696a6764695a7364776c6467696076273f275e592772606761776c7360775927582729277672715a646971273f2763646976602729277f6b5a666475273f2763646976602729276d6a6e5a6b6a716c273f2763646976602729276c6b6f5a7f6367273f27636469766027292771273f273631373634303130353d323234272927676c715a75776a716a666a69273f2763646976602778;bit_env=SLMjOJUt1zGi16qrVzE5QHzuGkndysQfHMuXu8zRyOP7gtAIbuM6a4aL3tndsaRboX2EtLkF0oC-6Xlhr3M9y58jGxTGX4PEujqDmXa6673qQlqwNBRRCbNmXxwFDLYHnvMAZVj7RcFLXCivS0sg6-z9sYsohQN9fLCVD9ipZUwTtwjJ1CkTQqjWP-1qE6taywBdv-hQr-TB0s3t6E5gMtDUbDkl-JyWC6Y7PsaY7XQAaKzP3-UAy8d7ohlr2G7cWMcNTtqAueVR7hHWC0L60foBGMsh50NOAnGxRVnx28eyr6IWT0sgm6h-b8G-L_6flEiynWaz6kN9TFTmeowIRBs4EfW6s4yDE3jFdP6_BeHj_xeD4pVzNtJhPekUryodhHlmDMEwKc31bw-oT6_UGNmzajWMBLlLFtbEIRiYnKo9Jl7gJpkEUxP1W4ENYXgMO1qqMch6zpIGNbjdu2hCbbydjfwGEuOQrBWpSd55dH1sLsEET42FVWlinR2-u_9k;gulu_source_res=eyJwX2luIjoiMTM2MDYwZmNhNGM1MWJkZTdhZTRiYjY1Yzk1ZWNhZTRiNjI3MzcyYTk3NDlhZmY4MTBiNThiZjcwZDZlZjZjNSJ9;passport_auth_mix_state=frs8xps8703ity6c17a22vm0ad45y5237dw1z0u4virj1qxp",
+      "note": "扫码登录 2026-05-06 16:01:55",
+      "created_at": "2026-05-06 16:01:55"
+    }
+  ],
+  "bili": [
+    {
+      "id": "bili_01",
+      "cookie": "SESSDATA=xxx; bili_jct=yyy; DedeUserID=zzz;",
+      "note": "B站账号1",
+      "valid": true,
+      "fatal_count": 0
+    },
+    {
+      "id": "bili_02",
+      "cookie": "buvid3=7F7302E2-28B6-CEF1-A146-05EA3F04633B13158infoc;b_nut=1778045013;_uuid=9826C684-3687-961C-CA33-42FDB57C545713738infoc;home_feed_column=5;browser_resolution=1920-1080;bmg_af_switch=1;bmg_src_def_domain=i1.hdslb.com;buvid_fp=a022ea63bc2ed7525a8389c1d9235582;buvid4=18CE7256-0CE4-33F3-AFA1-040548F7614E14200-026050613-0kJN5q+YRHMXK3c70TMdiw%3D%3D;bili_ticket=eyJhbGciOiJIUzI1NiIsImtpZCI6InMwMyIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzgzMDQyMTMsImlhdCI6MTc3ODA0NDk1MywicGx0IjotMX0.YZb6VNOuzrMGH6l5ftZH9lXEx5Tdrtc0O-fRcNOsKug;bili_ticket_expires=1778304153;SESSDATA=9c63fef4%2C1793597032%2Ceee95%2A51CjDad2HvzLoXd6hef6BSIp3FbrKCC_acf4QzkAR4al3iHwhDvyaJWC9aefnjibHbaywSVkc3c0JFclhxLUNmNkRJTzFSWENURzRfaVRCWUU2eVdnMnp3TmZBZW85RWlULUJZMU1OX0E3VmQ0aTVraUNJNTNNWU9oQzN0RjV1cmNjaUI4WG1zQVhBIIEC;bili_jct=1d5b835b4c0b5f359bb4e18e191ce191;DedeUserID=266850273;DedeUserID__ckMd5=b3eb4250fdc16cb4;sid=plzf44nq;theme-tip-show=SHOWED;b_lsid=964A8369_19DFBBE1DC6",
+      "note": "扫码登录 2026-05-06 13:23:54",
+      "valid": true,
+      "fatal_count": 0,
+      "created_at": "2026-05-06 13:23:54"
+    },
+    {
+      "id": "bili_03",
+      "cookie": "buvid3=7F7302E2-28B6-CEF1-A146-05EA3F04633B13158infoc;b_nut=1778045013;_uuid=9826C684-3687-961C-CA33-42FDB57C545713738infoc;home_feed_column=5;browser_resolution=1920-1080;buvid_fp=a022ea63bc2ed7525a8389c1d9235582;buvid4=18CE7256-0CE4-33F3-AFA1-040548F7614E14200-026050613-0kJN5q+YRHMXK3c70TMdiw%3D%3D;bili_ticket=eyJhbGciOiJIUzI1NiIsImtpZCI6InMwMyIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzgzMDQyMTMsImlhdCI6MTc3ODA0NDk1MywicGx0IjotMX0.YZb6VNOuzrMGH6l5ftZH9lXEx5Tdrtc0O-fRcNOsKug;bili_ticket_expires=1778304153;SESSDATA=9c63fef4%2C1793597032%2Ceee95%2A51CjDad2HvzLoXd6hef6BSIp3FbrKCC_acf4QzkAR4al3iHwhDvyaJWC9aefnjibHbaywSVkc3c0JFclhxLUNmNkRJTzFSWENURzRfaVRCWUU2eVdnMnp3TmZBZW85RWlULUJZMU1OX0E3VmQ0aTVraUNJNTNNWU9oQzN0RjV1cmNjaUI4WG1zQVhBIIEC;bili_jct=1d5b835b4c0b5f359bb4e18e191ce191;DedeUserID=266850273;DedeUserID__ckMd5=b3eb4250fdc16cb4;sid=plzf44nq;theme-tip-show=SHOWED;bmg_af_switch=1;bmg_src_def_domain=i1.hdslb.com;b_lsid=40A4D02A_19DFBF6E385",
+      "note": "sskip",
+      "valid": true,
+      "fatal_count": 0,
+      "created_at": "2026-05-06 14:25:54"
+    },
+    {
+      "id": "bili_04",
+      "cookie": "buvid3=7F7302E2-28B6-CEF1-A146-05EA3F04633B13158infoc;b_nut=1778045013;_uuid=9826C684-3687-961C-CA33-42FDB57C545713738infoc;home_feed_column=5;browser_resolution=1920-1080;buvid_fp=a022ea63bc2ed7525a8389c1d9235582;buvid4=18CE7256-0CE4-33F3-AFA1-040548F7614E14200-026050613-0kJN5q+YRHMXK3c70TMdiw%3D%3D;bili_ticket=eyJhbGciOiJIUzI1NiIsImtpZCI6InMwMyIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzgzMDQyMTMsImlhdCI6MTc3ODA0NDk1MywicGx0IjotMX0.YZb6VNOuzrMGH6l5ftZH9lXEx5Tdrtc0O-fRcNOsKug;bili_ticket_expires=1778304153;SESSDATA=9c63fef4%2C1793597032%2Ceee95%2A51CjDad2HvzLoXd6hef6BSIp3FbrKCC_acf4QzkAR4al3iHwhDvyaJWC9aefnjibHbaywSVkc3c0JFclhxLUNmNkRJTzFSWENURzRfaVRCWUU2eVdnMnp3TmZBZW85RWlULUJZMU1OX0E3VmQ0aTVraUNJNTNNWU9oQzN0RjV1cmNjaUI4WG1zQVhBIIEC;bili_jct=1d5b835b4c0b5f359bb4e18e191ce191;DedeUserID=266850273;DedeUserID__ckMd5=b3eb4250fdc16cb4;sid=plzf44nq;theme-tip-show=SHOWED;b_lsid=EDE5B67A_19DFC4EE371;bmg_af_switch=1;bmg_src_def_domain=i1.hdslb.com",
+      "note": "扫码登录 2026-05-06 16:02:01",
+      "created_at": "2026-05-06 16:02:01"
+    }
+  ],
+  "ks": [
+    {
+      "id": "ks_01",
+      "cookie": "did=xxx; didv=yyy;",
+      "note": "快手账号1",
+      "valid": true,
+      "fatal_count": 0
+    },
+    {
+      "id": "ks_02",
+      "cookie": "kpf=PC_WEB;clientid=3;did=web_1f1075eaf6858fdeb8d8370296116cf1;ktrace-context=1|MS44Nzg0NzI0NTc4Nzk2ODY5Ljc4OTUxNDU4LjE3NzgwNDg3NjA4MjkuMTIyODA3MzI0|MS44Nzg0NzI0NTc4Nzk2ODY5LjQ3MjY3MTU3LjE3NzgwNDg3NjA4MjkuMTIyODA3MzI1|0|webservice-user-growth-node|webservice|true|src-Js;kpn=KUAISHOU_VISION;kwpsecproductname=kuaishou-vision;kwssectoken=pjLXLNIgGsZPZ7sAxvtpF5MA2cdTV2Nm1jj2stiGiJmT3l4OT44b7IUlQwdVw87a;kwscode=KOjsMWLIm+kO/f7MlE6gmsc4e/9zZHjFABTH1lF31C4N7jisQyZoSUwfBn/v5jL+iL24X2wofe7m66etEdfANuO0OIzlnRa3aDaky9/U1sC/CH5gMzAPZj7MyqDgKJAaDVQ84Tu3IlBeJz7nUA4zyA8QS==",
+      "note": "扫码登录 2026-05-06 14:26:01",
+      "valid": true,
+      "fatal_count": 0,
+      "created_at": "2026-05-06 14:26:01"
+    },
+    {
+      "id": "ks_03",
+      "cookie": "kpf=PC_WEB;clientid=3;did=web_1f1075eaf6858fdeb8d8370296116cf1;kwpsecproductname=kuaishou-vision;ktrace-context=1|MS44Nzg0NzI0NTc4Nzk2ODY5LjQ2OTk2NTUzLjE3NzgwNTQ1Mjc3OTUuMTIzNDI2MTc1|MS44Nzg0NzI0NTc4Nzk2ODY5Ljg1OTY5NTQ4LjE3NzgwNTQ1Mjc3OTUuMTIzNDI2MTc2|0|webservice-user-growth-node|webservice|true|src-Js;kpn=KUAISHOU_VISION;kwssectoken=Ns2WEiI0OD9V9D1HfUGA1uCsRV3xnz2Gm1A1MKcrIWICMpHI9AsCdHgiiKYxCib3;kwscode=KOjsMWLIm+kO/f7MlE6gmsc4e/9zZHjFABTH1lF31C4N7jisQyZoSUwfBn/v5jL+iL24X2wofe7m66etEdfANuO0OIzlnRa3aDaky9/U1sC/D9/433uqmrkVmxz5AMjq1M+yHcxp0ATTWA9VCixlvwyAS==",
+      "note": "扫码登录 2026-05-06 16:02:08",
+      "created_at": "2026-05-06 16:02:08"
+    }
+  ],
+  "wb": [
+    {
+      "id": "wb_01",
+      "cookie": "SUBP=xxx; SUB=yyy; XSRF-TOKEN=zzz;",
+      "note": "微博账号1",
+      "valid": true,
+      "fatal_count": 0
+    },
+    {
+      "id": "wb_02",
+      "cookie": "WEIBOCN_FROM=1110006030;SUB=_2AkMeplAGf8NxqwFRm_0VzmPhbYtwyAjEieKo-qHdJRM3HRl-yT9kqkZatRB6NSZ-6QKnc2bD02rfBjKkdpGfYKep7CwV;SUBP=0033WrSXqPxfM72-Ws9jqgMF55529P9D9W5G_-NgDaUAN3UZ_1ure6ES;MLOGIN=0;_T_WM=80480737096;XSRF-TOKEN=33e307;mweibo_short_token=13a1faded6;M_WEIBOCN_PARAMS=uicode%3D10000011%26fid%3D102803",
+      "note": "扫码登录 2026-05-06 14:26:59",
+      "valid": true,
+      "fatal_count": 0,
+      "created_at": "2026-05-06 14:26:59"
+    }
+  ],
+  "xhs": [
+    {
+      "id": "xhs_01",
+      "cookie": "a1=xxx; webId=yyy; web_session=zzz;",
+      "note": "小红书账号1",
+      "valid": true,
+      "fatal_count": 0
+    }
+  ],
+  "toutiao": [
+    {
+      "id": "tt_01",
+      "cookie": "ttwid=xxx; msToken=yyy;",
+      "note": "头条账号1",
+      "valid": true,
+      "fatal_count": 0
+    }
+  ]
+}
