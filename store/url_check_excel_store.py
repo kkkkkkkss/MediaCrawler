@@ -123,8 +123,11 @@ def _extract_author(platform: str, raw_json: Optional[Dict], metrics: Optional[D
     return ""
 
 
-def _extract_title(platform: str, raw_json: Optional[Dict], metrics: Optional[Dict]) -> str:
+def _extract_title(platform: str, raw_json: Optional[Dict], metrics: Optional[Dict], row_title: str = "") -> str:
     """从原始数据或已提取的 metrics 中获取标题/正文摘要"""
+    # 优先使用 DOM 提取的标题（如头条从页面h1标签获取）
+    if row_title:
+        return _truncate_title(row_title)
     if metrics and metrics.get("title"):
         return _truncate_title(metrics["title"])
 
@@ -245,7 +248,7 @@ def generate_url_check_excel(results: List[Dict], output_path: Optional[str] = N
             "id": result.get("id", row_idx - 1),
             "type": _detect_content_type(platform, raw_json),
             "web_name": _PLATFORM_NAMES.get(platform, "未知"),
-            "title": _extract_title(platform, raw_json, metrics),
+            "title": _extract_title(platform, raw_json, metrics, result.get("_title", "")),
             "author": _extract_author(platform, raw_json, metrics),
             "praise_count": metrics.get("praise_count", ""),
             "reply_count": metrics.get("reply_count", ""),
@@ -467,7 +470,7 @@ def merge_results_to_excel(
             existing = ws.cell(row=row_idx, column=title_col_idx + 1).value
             existing_str = str(existing).strip() if existing is not None else ""
             if existing_str in _TITLE_EMPTY_PLACEHOLDERS:
-                title_val = _extract_title(platform, raw_json, metrics)
+                title_val = _extract_title(platform, raw_json, metrics, result.get("_title", ""))
                 if title_val:
                     ws.cell(row=row_idx, column=title_col_idx + 1, value=title_val)
             elif len(existing_str) > _MAX_TITLE_LENGTH:
@@ -501,7 +504,7 @@ def merge_results_to_excel(
             elif key == "visit_count":
                 val = metrics.get("visit_count", "")
             elif key == "title":
-                val = _extract_title(platform, raw_json, metrics)
+                val = _extract_title(platform, raw_json, metrics, result.get("_title", ""))
             elif key == "author":
                 val = _extract_author(platform, raw_json, metrics)
             elif key == "platform":

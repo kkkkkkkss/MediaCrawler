@@ -146,12 +146,11 @@ async def run_batch_check(
     mode: str = "both",
     enable_comments: bool = False,
 ):
-    """批量URL检测任务（后台异步执行）"""
+    """批量URL检测任务（后台异步执行，多平台并行处理）"""
     config.URLCHECK_MODE = mode
     config.URLCHECK_ENABLE_COMMENTS = enable_comments
     config.URLCHECK_INPUT_SOURCE = "file"
 
-    # 构建 URL 行
     rows = []
     for idx, url in enumerate(urls, start=1):
         url = url.strip()
@@ -164,65 +163,49 @@ async def run_batch_check(
         info.message = "没有有效的URL"
         return
 
-    # 复用 UrlCheckCrawler 的核心逻辑
     from media_platform.url_check.core import UrlCheckCrawler
-    crawler = UrlCheckCrawler()
     groups = group_urls_by_platform(rows)
 
-    from playwright.async_api import async_playwright
-    platform_order = ["dy", "bili", "ks", "toutiao", "xhs", "wb"]
-
     _PLATFORM_NAMES = {"dy": "抖音", "ks": "快手", "bili": "B站", "toutiao": "头条", "xhs": "小红书", "wb": "微博"}
-
-    for platform in platform_order:
-        if platform not in groups:
-            continue
-        url_rows = groups[platform]
-        info.add_log(f"开始处理平台: {_PLATFORM_NAMES.get(platform, platform)}，共 {len(url_rows)} 条")
-        async with async_playwright() as pw:
-            try:
-                client, _ = await crawler._create_platform_client(platform, pw)
-                if client:
-                    for row in url_rows:
-                        if info.is_cancelled:
-                            info.add_log("任务已被用户终止")
-                            return
-                        info.add_log(f"正在处理: {row['url'][:60]}...")
-                        await crawler._process_single_url(platform, client, row, mode)
-                        info.processed += 1
-                        info.progress = (info.processed / info.total) * 100
-                        last_result = crawler._all_results[-1] if crawler._all_results else None
-                        if last_result:
-                            valid_str = "有效" if last_result.get("_is_valid") == 1 else "无效"
-                            metrics = last_result.get("_metrics", {})
-                            method = row.get("_extract_method", "-")
-                            info.add_log(
-                                f"  → [{method}] {valid_str} | 点赞={metrics.get('praise_count', '-')} "
-                                f"评论={metrics.get('reply_count', '-')} 转发={metrics.get('share_count', '-')} "
-                                f"播放={metrics.get('visit_count', '-')}"
-                            )
-                        await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
-            except Exception as e:
-                info.add_log(f"平台 {platform} 处理异常: {e}")
-                utils.logger.error(f"[API] 批量处理平台 {platform} 异常: {e}")
-            finally:
-                await crawler._cleanup_browser()
+    platform_order = ["dy", "bili", "ks", "toutiao", "xhs", "wb"]
+    active_platforms = [p for p in platform_order if p in groups]
 
     for row in groups.get("unknown", []):
-        await crawler._save_result(row, is_valid=2)
         info.processed += 1
         info.add_log(f"未识别平台: {row['url'][:60]}... → 标记无效")
 
-    # 保存结果数据到 TaskInfo（用于 JSON 返回和回调）
-    if crawler._all_results:
-        info.result_data = crawler._all_results
-        info.comments_data = _collect_comments_data(crawler._all_results)
+    # 多平台并行处理：每个平台独立浏览器，互不干扰
+    parallel_enabled = getattr(config, "URLCHECK_PARALLEL_PLATFORMS", True)
+    if parallel_enabled and len(active_platforms) > 1:
+        info.add_log(
+            f"启用多平台并行模式，同时处理 {len(active_platforms)} 个平台: "
+            f"{[_PLATFORM_NAMES.get(p, p) for p in active_platforms]}"
+        )
+        all_results = await _parallel_platform_process(
+            info, groups, active_platforms, mode, _PLATFORM_NAMES
+        )
+    else:
+        all_results = await _sequential_platform_process(
+            info, groups, active_platforms, mode, _PLATFORM_NAMES
+        )
+
+    # 处理 unknown 平台
+    if groups.get("unknown"):
+        crawler_unknown = UrlCheckCrawler()
+        for row in groups["unknown"]:
+            await crawler_unknown._save_result(row, is_valid=2)
+        all_results.extend(crawler_unknown._all_results)
+
+    # 保存结果数据到 TaskInfo
+    if all_results:
+        info.result_data = all_results
+        info.comments_data = _collect_comments_data(all_results)
 
         import pathlib
         output_dir = pathlib.Path("data/url_check/excel")
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = str(output_dir / f"{info.task_id}.xlsx")
-        excel_path = generate_url_check_excel(crawler._all_results, output_path)
+        excel_path = generate_url_check_excel(all_results, output_path)
         info.result_file = excel_path
         info.add_log(f"Excel 报表已生成: {os.path.basename(excel_path)}")
 
@@ -236,7 +219,7 @@ async def run_file_upload_check(
     mode: str,
     enable_comments: bool,
 ):
-    """从上传的 Excel/CSV 文件中提取 URL 并检测，保留原始 Excel 所有列和数据"""
+    """从上传的 Excel/CSV 文件中提取 URL 并检测，多平台并行处理"""
     import pathlib
 
     ext = os.path.splitext(file_path)[1].lower()
@@ -248,7 +231,6 @@ async def run_file_upload_check(
         info.message = "文件中未找到有效URL"
         return
 
-    # 使用与 run_batch_check 相同的核心处理逻辑
     config.URLCHECK_MODE = mode
     config.URLCHECK_ENABLE_COMMENTS = enable_comments
     config.URLCHECK_INPUT_SOURCE = "file"
@@ -266,79 +248,60 @@ async def run_file_upload_check(
         return
 
     from media_platform.url_check.core import UrlCheckCrawler
-    crawler = UrlCheckCrawler()
     groups = group_urls_by_platform(rows)
 
-    from playwright.async_api import async_playwright
     platform_order = ["dy", "bili", "ks", "toutiao", "xhs", "wb"]
-
     _PLATFORM_NAMES = {"dy": "抖音", "ks": "快手", "bili": "B站", "toutiao": "头条", "xhs": "小红书", "wb": "微博"}
+    active_platforms = [p for p in platform_order if p in groups]
     info.add_log(f"文件解析完成，共 {len(rows)} 条URL待检测")
 
-    for platform in platform_order:
-        if platform not in groups:
-            continue
-        url_rows = groups[platform]
-        info.add_log(f"开始处理平台: {_PLATFORM_NAMES.get(platform, platform)}，共 {len(url_rows)} 条")
-        async with async_playwright() as pw:
-            try:
-                client, _ = await crawler._create_platform_client(platform, pw)
-                if client:
-                    for row in url_rows:
-                        if info.is_cancelled:
-                            info.add_log("任务已被用户终止")
-                            return
-                        info.add_log(f"正在处理: {row['url'][:60]}...")
-                        await crawler._process_single_url(platform, client, row, mode)
-                        info.processed += 1
-                        info.progress = (info.processed / info.total) * 100
-                        last_result = crawler._all_results[-1] if crawler._all_results else None
-                        if last_result:
-                            valid_str = "有效" if last_result.get("_is_valid") == 1 else "无效"
-                            metrics = last_result.get("_metrics", {})
-                            method = row.get("_extract_method", "-")
-                            info.add_log(
-                                f"  → [{method}] {valid_str} | 点赞={metrics.get('praise_count', '-')} "
-                                f"评论={metrics.get('reply_count', '-')} 转发={metrics.get('share_count', '-')} "
-                                f"播放={metrics.get('visit_count', '-')}"
-                            )
-                        await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
-            except Exception as e:
-                info.add_log(f"平台 {platform} 处理异常: {e}")
-                utils.logger.error(f"[API] 文件检测平台 {platform} 异常: {e}")
-            finally:
-                await crawler._cleanup_browser()
+    # 多平台并行处理
+    parallel_enabled = getattr(config, "URLCHECK_PARALLEL_PLATFORMS", True)
+    if parallel_enabled and len(active_platforms) > 1:
+        info.add_log(
+            f"启用多平台并行模式，同时处理 {len(active_platforms)} 个平台: "
+            f"{[_PLATFORM_NAMES.get(p, p) for p in active_platforms]}"
+        )
+        all_results = await _parallel_platform_process(
+            info, groups, active_platforms, mode, _PLATFORM_NAMES
+        )
+    else:
+        all_results = await _sequential_platform_process(
+            info, groups, active_platforms, mode, _PLATFORM_NAMES
+        )
 
-    for row in groups.get("unknown", []):
-        await crawler._save_result(row, is_valid=2)
-        info.processed += 1
+    # unknown 平台
+    if groups.get("unknown"):
+        crawler_unknown = UrlCheckCrawler()
+        for row in groups["unknown"]:
+            await crawler_unknown._save_result(row, is_valid=2)
+            info.processed += 1
+        all_results.extend(crawler_unknown._all_results)
 
-    if crawler._all_results:
-        info.result_data = crawler._all_results
-        info.comments_data = _collect_comments_data(crawler._all_results)
+    if all_results:
+        info.result_data = all_results
+        info.comments_data = _collect_comments_data(all_results)
 
     output_dir = pathlib.Path("data/url_check/excel")
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = str(output_dir / f"{info.task_id}.xlsx")
 
     if is_excel:
-        # Excel 源文件始终合并（即使无结果也追加列头）
         excel_path = merge_results_to_excel(
             source_path=file_path,
-            results=crawler._all_results,
+            results=all_results,
             output_path=output_path,
             url_column=url_column,
         )
         info.result_file = excel_path
         info.add_log(f"Excel 报表已生成: {os.path.basename(excel_path)}")
-    elif crawler._all_results:
-        excel_path = generate_url_check_excel(crawler._all_results, output_path)
+    elif all_results:
+        excel_path = generate_url_check_excel(all_results, output_path)
         info.result_file = excel_path
         info.add_log(f"Excel 报表已生成: {os.path.basename(excel_path)}")
 
     info.progress = 100.0
 
-    # 清理临时文件
     try:
         os.unlink(file_path)
     except Exception:
@@ -383,7 +346,7 @@ async def _run_db_rows_check(
     mode: str = "both",
     enable_comments: bool = False,
 ):
-    """处理从 DB 读取的行（保留原始 ID，结果回写 DB）"""
+    """处理从 DB 读取的行（保留原始 ID，结果回写 DB），多平台并行处理"""
     config.URLCHECK_MODE = mode
     config.URLCHECK_ENABLE_COMMENTS = enable_comments
     config.URLCHECK_INPUT_SOURCE = "db"
@@ -391,7 +354,6 @@ async def _run_db_rows_check(
     from database.external_db import external_db
     await external_db.ensure_pool()
 
-    # 保留数据库原始行 ID
     url_rows = []
     for r in db_rows:
         url = r.get(url_column, "")
@@ -405,65 +367,179 @@ async def _run_db_rows_check(
         return
 
     from media_platform.url_check.core import UrlCheckCrawler
-    crawler = UrlCheckCrawler()
     groups = group_urls_by_platform(url_rows)
 
-    from playwright.async_api import async_playwright
     platform_order = ["dy", "bili", "ks", "toutiao", "xhs", "wb"]
-
     _PLATFORM_NAMES = {"dy": "抖音", "ks": "快手", "bili": "B站", "toutiao": "头条", "xhs": "小红书", "wb": "微博"}
+    active_platforms = [p for p in platform_order if p in groups]
     info.add_log(f"数据库读取完成，共 {len(url_rows)} 条URL待检测")
 
-    for platform in platform_order:
-        if platform not in groups:
-            continue
-        platform_rows = groups[platform]
-        info.add_log(f"开始处理平台: {_PLATFORM_NAMES.get(platform, platform)}，共 {len(platform_rows)} 条")
-        async with async_playwright() as pw:
-            try:
-                client, _ = await crawler._create_platform_client(platform, pw)
-                if client:
-                    for row in platform_rows:
-                        if info.is_cancelled:
-                            info.add_log("任务已被用户终止")
-                            return
-                        info.add_log(f"正在处理: {row['url'][:60]}...")
-                        await crawler._process_single_url(platform, client, row, mode)
-                        info.processed += 1
-                        info.progress = (info.processed / info.total) * 100
-                        last_result = crawler._all_results[-1] if crawler._all_results else None
-                        if last_result:
-                            valid_str = "有效" if last_result.get("_is_valid") == 1 else "无效"
-                            metrics = last_result.get("_metrics", {})
-                            method = row.get("_extract_method", "-")
-                            info.add_log(
-                                f"  → [{method}] {valid_str} | 点赞={metrics.get('praise_count', '-')} "
-                                f"评论={metrics.get('reply_count', '-')} 转发={metrics.get('share_count', '-')} "
-                                f"播放={metrics.get('visit_count', '-')}"
-                            )
-                        await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
-            except Exception as e:
-                info.add_log(f"平台 {platform} 处理异常: {e}")
-                utils.logger.error(f"[API-DB] 批量处理平台 {platform} 异常: {e}")
-            finally:
-                await crawler._cleanup_browser()
+    # 多平台并行处理
+    parallel_enabled = getattr(config, "URLCHECK_PARALLEL_PLATFORMS", True)
+    if parallel_enabled and len(active_platforms) > 1:
+        info.add_log(
+            f"启用多平台并行模式，同时处理 {len(active_platforms)} 个平台: "
+            f"{[_PLATFORM_NAMES.get(p, p) for p in active_platforms]}"
+        )
+        all_results = await _parallel_platform_process(
+            info, groups, active_platforms, mode, _PLATFORM_NAMES
+        )
+    else:
+        all_results = await _sequential_platform_process(
+            info, groups, active_platforms, mode, _PLATFORM_NAMES
+        )
 
-    for row in groups.get("unknown", []):
-        await crawler._save_result(row, is_valid=2)
-        info.processed += 1
+    # unknown 平台
+    if groups.get("unknown"):
+        crawler_unknown = UrlCheckCrawler()
+        for row in groups["unknown"]:
+            await crawler_unknown._save_result(row, is_valid=2)
+            info.processed += 1
+        all_results.extend(crawler_unknown._all_results)
 
-    if crawler._all_results:
-        info.result_data = crawler._all_results
-        info.comments_data = _collect_comments_data(crawler._all_results)
+    if all_results:
+        info.result_data = all_results
+        info.comments_data = _collect_comments_data(all_results)
 
         import pathlib
         output_dir = pathlib.Path("data/url_check/excel")
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = str(output_dir / f"{info.task_id}.xlsx")
-        excel_path = generate_url_check_excel(crawler._all_results, output_path)
+        excel_path = generate_url_check_excel(all_results, output_path)
         info.result_file = excel_path
 
     info.progress = 100.0
+
+
+async def _parallel_platform_process(
+    info: TaskInfo,
+    groups: dict,
+    active_platforms: List[str],
+    mode: str,
+    platform_names: dict,
+) -> list:
+    """
+    多平台并行处理核心逻辑：
+    为每个平台创建独立的 Crawler 实例，通过 asyncio.gather 并行执行。
+    每个平台内部由 _process_platform 自动判断是否多浏览器并发。
+    """
+    from media_platform.url_check.core import UrlCheckCrawler
+
+    async def _platform_worker(platform: str):
+        """单平台工作协程：委托给 _process_platform（内部自动多浏览器并发）"""
+        url_rows = groups[platform]
+        crawler = UrlCheckCrawler()
+        pname = platform_names.get(platform, platform)
+
+        concurrency = crawler._resolve_concurrency(platform, len(url_rows))
+        info.add_log(
+            f"[{pname}] 待处理 {len(url_rows)} 条, 浏览器并发={concurrency}"
+        )
+
+        # 实时回调：每处理完一条URL就立即推送日志并更新进度
+        def _on_result(r: dict):
+            url_short = r.get("url", "")[:50]
+            is_valid = r.get("_is_valid")
+            valid_str = "有效" if is_valid == 1 else "无效"
+            metrics = r.get("_metrics", {})
+            method = r.get("_extract_method", "-")
+            info.add_log(
+                f"  [{pname}][{method}] {valid_str} | "
+                f"赞={metrics.get('praise_count', '-')} "
+                f"评={metrics.get('reply_count', '-')} "
+                f"转={metrics.get('share_count', '-')} "
+                f"播={metrics.get('visit_count', '-')} | "
+                f"{url_short}"
+            )
+            info.processed += 1
+            info.progress = min((info.processed / info.total) * 100, 99.9)
+
+        try:
+            await crawler._process_platform(platform, url_rows, mode, on_result=_on_result)
+        except Exception as e:
+            info.add_log(f"[{pname}] 处理异常: {e}")
+            utils.logger.error(f"[API-Parallel] 平台 {platform} 异常: {e}")
+
+        result_count = len(crawler._all_results)
+        valid_count = sum(1 for r in crawler._all_results if r.get("_is_valid") == 1)
+        invalid_count = result_count - valid_count
+        info.add_log(
+            f"[{pname}] 完成: 共{result_count}条, 有效{valid_count}, 无效{invalid_count}"
+        )
+        return crawler
+
+    # 并行启动所有平台
+    tasks = [_platform_worker(p) for p in active_platforms]
+    workers = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # 合并所有平台的结果
+    all_results = []
+    for result in workers:
+        if isinstance(result, Exception):
+            utils.logger.error(f"[API-Parallel] worker 异常: {result}")
+            continue
+        if hasattr(result, "_all_results"):
+            all_results.extend(result._all_results)
+
+    return all_results
+
+
+async def _sequential_platform_process(
+    info: TaskInfo,
+    groups: dict,
+    active_platforms: List[str],
+    mode: str,
+    platform_names: dict,
+) -> list:
+    """顺序处理模式（单平台或未启用并行时的回退逻辑）"""
+    from media_platform.url_check.core import UrlCheckCrawler
+
+    crawler = UrlCheckCrawler()
+
+    for platform in active_platforms:
+        url_rows = groups[platform]
+        pname = platform_names.get(platform, platform)
+        concurrency = crawler._resolve_concurrency(platform, len(url_rows))
+        info.add_log(
+            f"开始处理平台: {pname}，共 {len(url_rows)} 条, 浏览器并发={concurrency}"
+        )
+
+        if info.is_cancelled:
+            info.add_log("任务已被用户终止")
+            return crawler._all_results
+
+        # 实时回调
+        def _on_result(r: dict, _pname=pname):
+            url_short = r.get("url", "")[:50]
+            is_valid = r.get("_is_valid")
+            valid_str = "有效" if is_valid == 1 else "无效"
+            metrics = r.get("_metrics", {})
+            method = r.get("_extract_method", "-")
+            info.add_log(
+                f"  [{_pname}][{method}] {valid_str} | "
+                f"赞={metrics.get('praise_count', '-')} "
+                f"评={metrics.get('reply_count', '-')} "
+                f"转={metrics.get('share_count', '-')} "
+                f"播={metrics.get('visit_count', '-')} | "
+                f"{url_short}"
+            )
+            info.processed += 1
+            info.progress = min((info.processed / info.total) * 100, 99.9)
+
+        prev_count = len(crawler._all_results)
+        try:
+            await crawler._process_platform(platform, url_rows, mode, on_result=_on_result)
+        except Exception as e:
+            info.add_log(f"平台 {platform} 处理异常: {e}")
+            utils.logger.error(f"[API] 批量处理平台 {platform} 异常: {e}")
+
+        new_results = crawler._all_results[prev_count:]
+        valid_count = sum(1 for r in new_results if r.get("_is_valid") == 1)
+        info.add_log(
+            f"[{pname}] 完成: 共{len(new_results)}条, 有效{valid_count}, 无效{len(new_results)-valid_count}"
+        )
+
+    return crawler._all_results
 
 
 def _extract_urls_from_file(file_path: str, url_column: str) -> List[str]:

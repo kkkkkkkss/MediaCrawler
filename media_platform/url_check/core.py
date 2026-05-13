@@ -113,15 +113,27 @@ class UrlCheckCrawler(AbstractCrawler):
             stats_info = cookie_pool.get_stats()
             utils.logger.info(f"[UrlCheckCrawler] Cookie池状态: {stats_info}")
 
-        # 4. 按顺序处理每个平台
-        for platform in _PLATFORM_ORDER:
-            if platform not in groups:
-                continue
-            url_rows = groups[platform]
+        # 4. 多平台并行处理：每个平台独立浏览器，互不干扰，大幅提升吞吐量
+        # 对每个平台仍然是逐条处理，不增加单平台风控压力
+        parallel_enabled = getattr(config, "URLCHECK_PARALLEL_PLATFORMS", True)
+        active_platforms = [p for p in _PLATFORM_ORDER if p in groups]
+
+        if parallel_enabled and len(active_platforms) > 1:
             utils.logger.info(
-                f"[UrlCheckCrawler] 开始处理平台 [{platform}] 共 {len(url_rows)} 条"
+                f"[UrlCheckCrawler] 启用多平台并行模式，"
+                f"同时处理 {len(active_platforms)} 个平台: {active_platforms}"
             )
-            await self._process_platform(platform, url_rows, mode)
+            await self._process_platforms_parallel(active_platforms, groups, mode)
+        else:
+            # 单平台或未启用并行时，走原有顺序逻辑
+            for platform in _PLATFORM_ORDER:
+                if platform not in groups:
+                    continue
+                url_rows = groups[platform]
+                utils.logger.info(
+                    f"[UrlCheckCrawler] 开始处理平台 [{platform}] 共 {len(url_rows)} 条"
+                )
+                await self._process_platform(platform, url_rows, mode)
 
         # 处理未知平台的 URL（标记为无效）
         unknown_rows = groups.get("unknown", [])
@@ -151,12 +163,55 @@ class UrlCheckCrawler(AbstractCrawler):
             except Exception as e:
                 utils.logger.error(f"[UrlCheckCrawler] Excel 输出失败: {e}")
 
+    async def _process_platforms_parallel(
+        self, platforms: List[str], groups: Dict[str, List[Dict]], mode: str
+    ):
+        """
+        多平台并行处理：为每个平台创建独立的 Crawler 实例和浏览器上下文，
+        使用 asyncio.gather 同时处理。每个平台内部仍逐条顺序处理，
+        保证每个账号同一时间只有一个请求，不增加风控风险。
+        """
+        async def _platform_worker(platform: str, url_rows: List[Dict]):
+            """单个平台的工作协程，拥有独立的浏览器实例"""
+            # 每个平台使用独立的 Crawler 实例，避免共享浏览器上下文
+            worker = UrlCheckCrawler()
+            utils.logger.info(
+                f"[Parallel] 平台 [{platform}] 启动独立浏览器，"
+                f"待处理 {len(url_rows)} 条"
+            )
+            try:
+                await worker._process_platform(platform, url_rows, mode)
+            except Exception as e:
+                utils.logger.error(
+                    f"[Parallel] 平台 [{platform}] 并行处理异常: {e}"
+                )
+            return worker
+
+        # 并行启动所有平台
+        tasks = []
+        for platform in platforms:
+            url_rows = groups[platform]
+            tasks.append(_platform_worker(platform, url_rows))
+
+        workers = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 合并所有 worker 的结果到主实例
+        for result in workers:
+            if isinstance(result, Exception):
+                utils.logger.error(f"[Parallel] 某平台 worker 异常: {result}")
+                continue
+            if isinstance(result, UrlCheckCrawler):
+                self._all_results.extend(result._all_results)
+                self._collected_comment_texts.extend(result._collected_comment_texts)
+
     async def _process_platform(
-        self, platform: str, url_rows: List[Dict], mode: str
+        self, platform: str, url_rows: List[Dict], mode: str,
+        on_result=None,
     ):
         """
         处理单个平台的所有 URL。
-        流程：HTTP 预检(免浏览器) → 仅对需要浏览器的 URL 启动浏览器 → 逐 URL 处理
+        流程：HTTP 预检(免浏览器) → 判断并发数 → 单浏览器或多浏览器并发处理
+        on_result: 可选回调，每条URL处理完后立即调用 on_result(row_dict)，用于实时更新前端日志
         """
         # ── 第一层：HTTP 预检，不需要浏览器/登录，快速筛掉明确失效的 ──
         need_browser_rows = []
@@ -169,6 +224,9 @@ class UrlCheckCrawler(AbstractCrawler):
                     f"reason={status.value} url={url}"
                 )
                 await self._save_result(row, is_valid=2)
+                # 实时回调：HTTP预检结果
+                if on_result:
+                    on_result(row)
             else:
                 need_browser_rows.append(row)
 
@@ -183,30 +241,123 @@ class UrlCheckCrawler(AbstractCrawler):
             f"{len(need_browser_rows)} 条需要浏览器处理"
         )
 
-        # ── 第二/三层：需要浏览器的 URL ──
-        async with async_playwright() as playwright:
-            try:
-                client, cleanup = await self._create_platform_client(
-                    platform, playwright
+        # ── 确定并发数，决定走单浏览器还是多浏览器 ──
+        concurrency = self._resolve_concurrency(platform, len(need_browser_rows))
+
+        if concurrency > 1:
+            await self._process_platform_concurrent(
+                platform, need_browser_rows, mode, concurrency, on_result
+            )
+        else:
+            await self._process_platform_single(
+                platform, need_browser_rows, mode, on_result
+            )
+
+    async def _process_platform_single(
+        self, platform: str, need_browser_rows: List[Dict], mode: str,
+        on_result=None,
+    ):
+        """单浏览器处理模式（复用 _browser_worker，确保与并发模式行为一致）"""
+        cookie_free = platform in getattr(config, "COOKIE_FREE_PLATFORMS", [])
+
+        # 获取Cookie
+        cookie_info: Optional[tuple] = None
+        if not cookie_free and getattr(config, "ENABLE_COOKIE_POOL", False):
+            from proxy.cookie_pool import cookie_pool
+            allocated = cookie_pool.allocate_cookies(platform, 1)
+            if allocated:
+                cookie_info = allocated[0]
+
+        used_cookie_ids = {cookie_info[0]} if cookie_info else set()
+
+        url_queue: asyncio.Queue = asyncio.Queue()
+        for row in need_browser_rows:
+            await url_queue.put(row)
+
+        results = await self._browser_worker(
+            platform, mode, url_queue, cookie_info, 1, used_cookie_ids,
+            on_result=on_result,
+        )
+        self._all_results.extend(results)
+
+    async def _process_platform_concurrent(
+        self, platform: str, need_browser_rows: List[Dict], mode: str, concurrency: int,
+        on_result=None,
+    ):
+        """
+        多浏览器并发处理模式。
+        创建共享队列，为每个浏览器分配独立Cookie，通过 asyncio.gather 并行处理。
+        """
+        cookie_free = platform in getattr(config, "COOKIE_FREE_PLATFORMS", [])
+
+        utils.logger.info(
+            f"[UrlCheckCrawler] 平台 [{platform}] 启用多浏览器并发: "
+            f"concurrency={concurrency}, cookie_free={cookie_free}"
+        )
+
+        # 分配Cookie（cookie_free 平台不需要）
+        cookie_list: List[Optional[tuple]] = []
+        used_cookie_ids: set = set()
+
+        if cookie_free:
+            cookie_list = [None] * concurrency
+        else:
+            from proxy.cookie_pool import cookie_pool
+            allocated = cookie_pool.allocate_cookies(platform, concurrency)
+            cookie_list = allocated
+            used_cookie_ids = {c[0] for c in allocated}
+            # 实际并发受限于分配到的Cookie数
+            concurrency = len(cookie_list)
+
+        if concurrency < 1:
+            utils.logger.warning(
+                f"[UrlCheckCrawler] 平台 [{platform}] 无可用Cookie，回退单浏览器模式"
+            )
+            await self._process_platform_single(platform, need_browser_rows, mode, on_result)
+            return
+
+        # 创建共享URL队列
+        url_queue: asyncio.Queue = asyncio.Queue()
+        for row in need_browser_rows:
+            await url_queue.put(row)
+
+        # 启动多个 Worker
+        tasks = []
+        for i, cookie_info in enumerate(cookie_list):
+            tasks.append(
+                self._browser_worker(
+                    platform, mode, url_queue,
+                    cookie_info, i + 1, used_cookie_ids,
+                    on_result=on_result,
                 )
-                if client is None:
-                    utils.logger.error(
-                        f"[UrlCheckCrawler] 平台 [{platform}] 创建 Client 失败，跳过"
-                    )
-                    return
+            )
 
-                for row in need_browser_rows:
-                    await self._process_single_url(
-                        platform, client, row, mode
-                    )
-                    await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+        all_worker_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            except Exception as e:
+        # 合并结果到主实例
+        for result in all_worker_results:
+            if isinstance(result, Exception):
                 utils.logger.error(
-                    f"[UrlCheckCrawler] 平台 [{platform}] 处理异常: {e}"
+                    f"[UrlCheckCrawler] 平台 [{platform}] Worker 异常: {result}"
                 )
-            finally:
-                await self._cleanup_browser()
+                continue
+            if isinstance(result, list):
+                self._all_results.extend(result)
+
+        # 队列中可能还有未处理的URL（所有Worker都因Cookie失效停止的情况）
+        remaining = []
+        while not url_queue.empty():
+            try:
+                remaining.append(url_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        if remaining:
+            utils.logger.warning(
+                f"[UrlCheckCrawler] 平台 [{platform}] 剩余 {len(remaining)} 条URL未处理"
+                f"（所有Cookie失效），标记为有效（无法确认状态）"
+            )
+            for row in remaining:
+                await self._save_result(row, is_valid=1)
 
     async def _save_result(self, row: Dict, is_valid: int, metrics: Optional[Dict] = None):
         """统一的结果保存：文件模式写内存，DB模式写外部库"""
@@ -279,16 +430,13 @@ class UrlCheckCrawler(AbstractCrawler):
                         utils.logger.info(
                             f"[UrlCheckCrawler] id={row_id} 头条使用 DOM 提取指标"
                         )
-                        # 决定 DOM 提取时的导航 URL
-                        if "/i" in url and "/i" + content_id in url:
-                            toutiao_nav_url = f"https://www.toutiao.com/video/{content_id}/"
-                        elif any(d in url for d in ("zjurl.cn", "weitoutiao", "ixigua.com")):
-                            toutiao_nav_url = url
-                        else:
-                            toutiao_nav_url = None
+                        # DOM提取不再重新导航（复用_fetch_detail已加载的页面）
                         metrics = await client.get_article_metrics_from_dom(
-                            content_id, original_url=toutiao_nav_url
+                            content_id, original_url=None
                         )
+                        # 如果 DOM 提取到了标题，保存到 metrics 中供后续使用
+                        if metrics and metrics.get("title"):
+                            row["_title"] = metrics.pop("title")
                         row["_extract_method"] = "DOM"
                     else:
                         # 构造基准帖子检测回调（三层兜底第二层）
@@ -552,23 +700,54 @@ class UrlCheckCrawler(AbstractCrawler):
 
             elif platform == "toutiao":
                 if hasattr(client, "get_article_info"):
-                    # /i{id}/ 短链在 headless 下被拦截，改用 /video/ 路径
-                    if "/i" in url and "/i" + content_id in url:
-                        nav_url = f"https://www.toutiao.com/video/{content_id}/"
-                    elif any(d in url for d in ("zjurl.cn", "weitoutiao", "ixigua.com")):
+                    # 第三方跳转链接保留原始URL导航
+                    if any(d in url for d in ("zjurl.cn", "weitoutiao", "ixigua.com")):
                         nav_url = url
                     else:
-                        nav_url = None  # 使用默认 /article/ 路径
+                        # /i{id}/ 旧版短链在 headless 模式下会被反爬拦截重定向到首页，
+                        # 必须转换为 /article/ 或 /video/ 正规路径
+                        nav_url = None
 
                     if nav_url:
                         result = await client.get_article_info(
                             content_id, original_url=nav_url
                         )
                     else:
+                        # 先尝试 /article/ 路径（默认）
                         result = await client.get_article_info(content_id)
 
-                    # DOM 检测失效关键词
+                        # /article/ 路径失败（None或内容无效）时回退 /video/ 路径，
+                        # 因为头条内容可能是视频，/article/ 路径无法访问视频内容
+                        need_fallback = (result is None)
+                        if result and not need_fallback:
+                            from tools.validity_checker import check_api_json_validity, is_invalid
+                            raw_json = result.get("raw_json") or {}
+                            status_check = check_api_json_validity(platform, raw_json)
+                            need_fallback = is_invalid(status_check)
+
+                        if need_fallback:
+                            utils.logger.info(
+                                f"[UrlCheckCrawler] toutiao /article/ 路径无效，回退 /video/ 路径"
+                            )
+                            video_url = f"https://www.toutiao.com/video/{content_id}/"
+                            result = await client.get_article_info(
+                                content_id, original_url=video_url
+                            )
+
+                    # DOM 检测失效关键词 + 首页重定向检测
                     if hasattr(client, "playwright_page"):
+                        dead_keywords = [
+                            "内容已删除", "文章不存在", "该内容已下架",
+                            "页面不存在", "内容不存在", "404 Not Found",
+                            "抱歉，你访问的内容不存在", "内容正在审核中",
+                            "此内容因违规无法查看", "该文章已被删除",
+                        ]
+                        # 头条首页特征：页面被重定向到首页，说明内容已失效
+                        homepage_indicators = [
+                            "下载头条APP关于头条反馈侵权投诉",
+                            "关注\n推荐\n",
+                        ]
+
                         page_text = await client.playwright_page.evaluate(
                             "() => document.body?.innerText?.substring(0, 1000) || ''"
                         )
@@ -576,28 +755,82 @@ class UrlCheckCrawler(AbstractCrawler):
                             f"[UrlCheckCrawler] toutiao page_text({len(page_text)}字): "
                             f"{page_text[:80]}"
                         )
+
+                        is_dead = False
                         stripped = page_text.strip().lower()
-                        # 头条404特征：页面仅显示"error"或完全空白
+
+                        # 检查是否为空白页/error/404
                         if stripped in ("error", "", "404"):
+                            is_dead = True
+                        else:
+                            # 检查失效关键词
+                            for kw in dead_keywords:
+                                if kw in page_text:
+                                    is_dead = True
+                                    break
+
+                        # 检查是否被重定向到首页（内容被删除后头条跳转首页）
+                        if not is_dead:
+                            for indicator in homepage_indicators:
+                                if indicator in page_text:
+                                    # 进一步确认：首页不会包含当前content_id相关内容
+                                    final_url = client.playwright_page.url
+                                    if content_id not in final_url:
+                                        utils.logger.info(
+                                            f"[UrlCheckCrawler] toutiao 检测到首页重定向"
+                                            f"（内容已失效）: {content_id}"
+                                        )
+                                        is_dead = True
+                                    break
+
+                        if is_dead:
+                            # 二次确认：用原始URL重新导航，避免/video/路径导致的误判
                             utils.logger.info(
-                                f"[UrlCheckCrawler] toutiao 页面为空白/error，"
-                                f"判定为失效: {content_id}"
+                                f"[UrlCheckCrawler] toutiao 首次检测疑似失效，"
+                                f"等待后二次确认: {content_id}"
+                            )
+                            await asyncio.sleep(2)
+                            try:
+                                # 使用原始/i{id}/ URL 重新确认（不转换为/video/）
+                                confirm_url = url
+                                await client.playwright_page.goto(
+                                    confirm_url, wait_until="domcontentloaded", timeout=15000
+                                )
+                                await asyncio.sleep(3)
+                                page_text2 = await client.playwright_page.evaluate(
+                                    "() => document.body?.innerText?.substring(0, 1000) || ''"
+                                )
+                                stripped2 = page_text2.strip().lower()
+                                still_dead = stripped2 in ("error", "", "404")
+                                if not still_dead:
+                                    for kw in dead_keywords:
+                                        if kw in page_text2:
+                                            still_dead = True
+                                            break
+                                if not still_dead:
+                                    # 检查是否又跳到首页
+                                    for indicator in homepage_indicators:
+                                        if indicator in page_text2:
+                                            final_url2 = client.playwright_page.url
+                                            if content_id not in final_url2:
+                                                still_dead = True
+                                            break
+                                if not still_dead:
+                                    utils.logger.info(
+                                        f"[UrlCheckCrawler] toutiao 二次确认: 内容存活 {content_id}"
+                                    )
+                                    return result
+                            except Exception as e:
+                                utils.logger.warning(
+                                    f"[UrlCheckCrawler] toutiao 二次确认异常: {e}"
+                                )
+
+                            utils.logger.info(
+                                f"[UrlCheckCrawler] toutiao 二次确认失效: {content_id}"
                             )
                             if row is not None:
                                 row["_fetch_fail_reason"] = self._FETCH_FAIL_CONTENT
                             return None
-                        dead_keywords = ["内容已删除", "文章不存在", "该内容已下架",
-                                         "页面不存在", "内容不存在", "404 Not Found",
-                                         "抱歉，你访问的内容不存在", "内容正在审核中",
-                                         "此内容因违规无法查看", "该文章已被删除"]
-                        for kw in dead_keywords:
-                            if kw in page_text:
-                                utils.logger.info(
-                                    f"[UrlCheckCrawler] toutiao DOM检测到失效关键词「{kw}」: {content_id}"
-                                )
-                                if row is not None:
-                                    row["_fetch_fail_reason"] = self._FETCH_FAIL_CONTENT
-                                return None
                     return result
                 return None
 
@@ -831,6 +1064,285 @@ class UrlCheckCrawler(AbstractCrawler):
             utils.logger.info(f"[UrlCheckCrawler] 词云已保存: {prefix}")
         except Exception as e:
             utils.logger.error(f"[UrlCheckCrawler] 词云生成失败: {e}")
+
+    # ────────────────── 同平台多浏览器并发 ──────────────────
+
+    def _resolve_concurrency(self, platform: str, url_count: int) -> int:
+        """
+        计算指定平台的实际浏览器并发数。
+        - cookie_free 平台：直接按 PLATFORM_CONCURRENCY 配置值（不受Cookie限制）
+        - 其他平台：min(配置值, 可用Cookie数, URL数量)
+        """
+        platform_concurrency = getattr(config, "PLATFORM_CONCURRENCY", {})
+        configured = platform_concurrency.get(platform, 1)
+
+        cookie_free = getattr(config, "COOKIE_FREE_PLATFORMS", [])
+        if platform in cookie_free:
+            # 无Cookie限制，但不需要超过URL数量
+            actual = min(configured, url_count)
+        else:
+            # 受Cookie数量限制
+            if getattr(config, "ENABLE_COOKIE_POOL", False):
+                from proxy.cookie_pool import cookie_pool
+                available = cookie_pool.get_valid_count(platform)
+            else:
+                available = 1
+            actual = min(configured, available, url_count)
+
+        # 至少为1
+        return max(actual, 1)
+
+    async def _browser_worker(
+        self,
+        platform: str,
+        mode: str,
+        queue: asyncio.Queue,
+        cookie_info: Optional[tuple],
+        worker_id: int,
+        used_cookie_ids: set,
+        on_result=None,
+    ) -> List[Dict]:
+        """
+        单个浏览器工作协程。从共享队列取 URL 处理，直到队列空或达到软上限。
+        Cookie 失效时尝试从池中获取新 Cookie 重启浏览器。
+
+        Args:
+            platform: 平台标识
+            mode: 检测模式
+            queue: 共享 URL 队列
+            cookie_info: (cookie_id, cookie_str) 或 None（cookie_free平台）
+            worker_id: Worker 编号（用于日志标识）
+            used_cookie_ids: 所有 Worker 已占用的 Cookie ID 集合（共享引用，用于避免重复分配）
+        """
+        max_per_cookie = getattr(config, "MAX_URLS_PER_COOKIE", 0)
+        platform_sleep = getattr(config, "PLATFORM_SLEEP_SEC", {}).get(
+            platform, config.CRAWLER_MAX_SLEEP_SEC
+        )
+        cookie_free = platform in getattr(config, "COOKIE_FREE_PLATFORMS", [])
+        worker_results: List[Dict] = []
+        processed_count = 0
+        tag = f"[W{worker_id}-{platform}]"
+
+        current_cookie_id = cookie_info[0] if cookie_info else None
+        current_cookie_str = cookie_info[1] if cookie_info else None
+
+        async with async_playwright() as playwright:
+            client = None
+            crawler_instance = UrlCheckCrawler()
+
+            try:
+                # 创建浏览器和Client
+                client = await self._create_worker_client(
+                    crawler_instance, platform, playwright,
+                    current_cookie_str, cookie_free, worker_id
+                )
+                if client is None:
+                    utils.logger.error(f"{tag} 创建Client失败")
+                    return worker_results
+
+                utils.logger.info(
+                    f"{tag} 启动成功"
+                    f"{'' if cookie_free else f', Cookie={current_cookie_id}'}"
+                )
+
+                while not queue.empty():
+                    # 软上限检查
+                    if max_per_cookie > 0 and processed_count >= max_per_cookie:
+                        utils.logger.info(
+                            f"{tag} 达到单Cookie上限({max_per_cookie}条)，停止取新URL"
+                        )
+                        break
+
+                    try:
+                        row = queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+
+                    url = row.get("url", "")
+                    utils.logger.info(f"{tag} 处理 id={row['id']} url={url[:50]}...")
+
+                    await crawler_instance._process_single_url(platform, client, row, mode)
+                    processed_count += 1
+                    new_results = crawler_instance._all_results[len(worker_results):]
+                    worker_results.extend(new_results)
+
+                    # 实时回调：每条URL处理完立即通知上层（用于前端日志）
+                    if on_result:
+                        for r in new_results:
+                            on_result(r)
+
+                    # Cookie 失效检测：当 _fetch_fail_reason 为 auth_failed 时尝试换 Cookie
+                    fail_reason = row.get("_fetch_fail_reason", "")
+                    if fail_reason == UrlCheckCrawler._FETCH_FAIL_AUTH and not cookie_free:
+                        new_client = await self._try_rebind_cookie(
+                            crawler_instance, platform, playwright,
+                            current_cookie_id, used_cookie_ids, tag
+                        )
+                        if new_client:
+                            client = new_client
+                            # 更新当前Cookie信息
+                            current_cookie_id = getattr(
+                                crawler_instance, "_rebound_cookie_id", current_cookie_id
+                            )
+                        else:
+                            # 无法重新绑定，停止该Worker
+                            utils.logger.warning(f"{tag} Cookie失效且无备用Cookie，Worker停止")
+                            break
+
+                    await asyncio.sleep(platform_sleep)
+
+            except Exception as e:
+                utils.logger.error(f"{tag} Worker异常: {e}")
+            finally:
+                await crawler_instance._cleanup_browser()
+
+        utils.logger.info(f"{tag} 完成，处理了 {processed_count} 条URL")
+        return worker_results
+
+    async def _create_worker_client(
+        self,
+        crawler_instance: "UrlCheckCrawler",
+        platform: str,
+        playwright: "Playwright",
+        cookie_str: Optional[str],
+        cookie_free: bool,
+        worker_id: int = 0,
+    ):
+        """为 Worker 创建浏览器 Client（cookie_free 平台开空白浏览器）"""
+        from importlib import import_module
+
+        pw_proxy = await self._get_playwright_proxy()
+
+        # 使用非持久化浏览器（避免 persistent_context 的缓存互相干扰）
+        chromium = playwright.chromium
+        launch_kwargs = {
+            "headless": config.HEADLESS,
+        }
+        if pw_proxy:
+            launch_kwargs["proxy"] = pw_proxy
+
+        browser = await chromium.launch(**launch_kwargs)
+        # 保存 browser 引用以便后续关闭
+        crawler_instance._worker_browser = browser
+
+        context_kwargs = {
+            "viewport": {"width": 1920, "height": 1080},
+            "user_agent": utils.get_user_agent(),
+        }
+        crawler_instance.browser_context = await browser.new_context(**context_kwargs)
+        await crawler_instance.browser_context.add_init_script(path="libs/stealth.min.js")
+        crawler_instance.context_page = await crawler_instance.browser_context.new_page()
+
+        if cookie_free:
+            # 无需Cookie，直接导航到平台首页创建Client
+            pcfg = crawler_instance._PLATFORM_CLIENT_MAP.get(platform)
+            if not pcfg:
+                return None
+            home_url = pcfg["home_url"]
+            await crawler_instance.context_page.goto(home_url)
+            await asyncio.sleep(1)
+
+            module_path, class_name = pcfg["client_path"].rsplit(".", 1)
+            mod = import_module(module_path)
+            client_cls = getattr(mod, class_name)
+
+            headers = {
+                "User-Agent": utils.get_user_agent(),
+                "Cookie": "",
+                **pcfg["headers_base"],
+            }
+            client = client_cls(
+                headers=headers,
+                playwright_page=crawler_instance.context_page,
+                cookie_dict={},
+            )
+            return client
+        else:
+            # 有Cookie，注入后创建Client
+            if not cookie_str:
+                return None
+            from proxy.cookie_pool import CookiePool
+            cookie_dict = CookiePool.parse_cookie_string(cookie_str)
+
+            pcfg = crawler_instance._PLATFORM_CLIENT_MAP.get(platform)
+            if not pcfg:
+                return None
+
+            home_url = pcfg["home_url"]
+            domain = home_url.replace("https://", "").replace("http://", "").rstrip("/")
+            if domain.startswith("www."):
+                domain = domain[4:]
+            if domain.startswith("m."):
+                domain = domain[2:]
+
+            browser_cookies = []
+            for name, value in cookie_dict.items():
+                browser_cookies.append({
+                    "name": name, "value": value,
+                    "domain": f".{domain}", "path": "/",
+                    "secure": True, "httpOnly": False,
+                })
+            if browser_cookies:
+                await crawler_instance.browser_context.add_cookies(browser_cookies)
+
+            await crawler_instance.context_page.goto(home_url)
+            await asyncio.sleep(2)
+
+            module_path, class_name = pcfg["client_path"].rsplit(".", 1)
+            mod = import_module(module_path)
+            client_cls = getattr(mod, class_name)
+
+            headers = {
+                "User-Agent": utils.get_user_agent(),
+                "Cookie": cookie_str,
+                **pcfg["headers_base"],
+            }
+            client = client_cls(
+                headers=headers,
+                playwright_page=crawler_instance.context_page,
+                cookie_dict=cookie_dict,
+            )
+            return client
+
+    async def _try_rebind_cookie(
+        self,
+        crawler_instance: "UrlCheckCrawler",
+        platform: str,
+        playwright: "Playwright",
+        current_cookie_id: Optional[str],
+        used_cookie_ids: set,
+        tag: str,
+    ):
+        """Cookie 失效后尝试从池中取新 Cookie 重建 Client"""
+        if not getattr(config, "ENABLE_COOKIE_POOL", False):
+            return None
+
+        from proxy.cookie_pool import cookie_pool, FailureLevel
+
+        # 报告当前Cookie失败
+        if current_cookie_id:
+            cookie_pool.report_failure(platform, FailureLevel.FATAL)
+
+        # 获取一个未被其他Worker占用的新Cookie
+        new_cookie = cookie_pool.get_unused_cookie(platform, used_cookie_ids)
+        if not new_cookie:
+            return None
+
+        new_id, new_str = new_cookie
+        used_cookie_ids.add(new_id)
+        if current_cookie_id:
+            used_cookie_ids.discard(current_cookie_id)
+
+        utils.logger.info(f"{tag} 重新绑定Cookie: {current_cookie_id} → {new_id}")
+
+        # 关闭旧浏览器，创建新Client
+        await crawler_instance._cleanup_browser()
+        client = await self._create_worker_client(
+            crawler_instance, platform, playwright, new_str, False
+        )
+        # 记录新的cookie_id供外部使用
+        crawler_instance._rebound_cookie_id = new_id
+        return client
 
     # ────────────────── 浏览器管理 ──────────────────
 
@@ -1270,7 +1782,7 @@ class UrlCheckCrawler(AbstractCrawler):
         return client
 
     async def _cleanup_browser(self):
-        """关闭当前浏览器会话"""
+        """关闭当前浏览器会话（兼容 persistent context 和 非持久化 browser）"""
         try:
             if self.cdp_manager:
                 await self.cdp_manager.cleanup()
@@ -1278,6 +1790,10 @@ class UrlCheckCrawler(AbstractCrawler):
             elif self.browser_context:
                 await self.browser_context.close()
                 self.browser_context = None
+            # 关闭非持久化 browser 实例（Worker 模式）
+            if hasattr(self, "_worker_browser") and self._worker_browser:
+                await self._worker_browser.close()
+                self._worker_browser = None
         except Exception as e:
             utils.logger.warning(f"[UrlCheckCrawler] 清理浏览器时异常: {e}")
 

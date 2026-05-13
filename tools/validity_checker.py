@@ -285,6 +285,16 @@ def check_api_json_validity(platform: str, raw_json: Any) -> ValidityStatus:
             msg = str(raw_json.get("message", "") or raw_json.get("msg", ""))
             if any(kw in msg for kw in ("不存在", "已删除", "下架", "已过期")):
                 return ValidityStatus.INVALID_DELETED
+            # 头条首页 SSR 数据特征：包含 feedList/recommendList 但没有 articleInfo/videoInfo
+            # 这是因为内容失效后被重定向到首页，提取到的是首页的全局状态
+            if isinstance(raw_json, dict):
+                has_feed = any(k in raw_json for k in ("feedList", "recommendList", "tabList"))
+                has_content = any(k in raw_json for k in (
+                    "articleInfo", "videoInfo", "itemInfo", "itemId",
+                    "title", "content", "group_id",
+                ))
+                if has_feed and not has_content:
+                    return ValidityStatus.INVALID_DELETED
 
     return ValidityStatus.VALID
 

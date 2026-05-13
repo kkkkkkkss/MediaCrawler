@@ -84,9 +84,9 @@ class ToutiaoClient(AbstractApiClient):
             detail_url = f"https://www.toutiao.com/article/{item_id}/"
         utils.logger.info(f"[ToutiaoClient] 导航到: {detail_url}")
         try:
-            # 导航到文章页面
-            await self.playwright_page.goto(detail_url, wait_until="domcontentloaded")
-            await asyncio.sleep(2)
+            # 导航到文章页面（增加等待时间，确保页面完全渲染避免并发时加载不完整）
+            await self.playwright_page.goto(detail_url, wait_until="domcontentloaded", timeout=15000)
+            await asyncio.sleep(3)
 
             # 尝试从页面 SSR 数据中提取 JSON
             # 头条的 SSR 数据通常在 window.__INITIAL_STATE__ 或 INITIAL_PROPS 中
@@ -261,6 +261,23 @@ class ToutiaoClient(AbstractApiClient):
                 for k, v in metrics.items():
                     if v is not None:
                         result[k] = v
+
+            # 提取标题：优先从 h1 或 document.title 获取
+            title = await target_page.evaluate("""
+                () => {
+                    // h1 标签通常是文章/视频标题
+                    const h1 = document.querySelector('h1');
+                    if (h1 && h1.textContent.trim().length > 2) return h1.textContent.trim();
+                    // 页面 title 去掉尾部的 " - 今日头条"
+                    const pageTitle = document.title || '';
+                    const cleaned = pageTitle.replace(/ - 今日头条$/, '').replace(/ - 头条搜索$/, '').trim();
+                    if (cleaned.length > 2 && cleaned !== '今日头条') return cleaned;
+                    return null;
+                }
+            """)
+            if title:
+                result["title"] = title
+
             utils.logger.info(f"[ToutiaoClient] DOM 指标提取: item_id={item_id} → {result}")
         except Exception as e:
             utils.logger.warning(f"[ToutiaoClient] DOM 指标提取失败 item_id={item_id}: {e}")

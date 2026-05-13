@@ -313,6 +313,47 @@ class CookiePool:
         """检查指定平台是否还有可用 Cookie"""
         return any(e.valid for e in self._pool.get(platform, []))
 
+    def get_valid_count(self, platform: str) -> int:
+        """获取指定平台当前有效 Cookie 数量"""
+        return sum(1 for e in self._pool.get(platform, []) if e.valid)
+
+    def allocate_cookies(self, platform: str, count: int) -> List[tuple]:
+        """
+        一次性分配 count 个不重复的有效 Cookie，用于多浏览器并发时绑定专属 Cookie。
+        返回 [(cookie_id, cookie_str), ...]，实际数量 = min(count, 可用数)。
+        """
+        valid_entries = [e for e in self._pool.get(platform, []) if e.valid]
+        # 随机打乱避免每次都用相同的前N个
+        random.shuffle(valid_entries)
+        allocated = []
+        for entry in valid_entries[:count]:
+            entry.last_used = time.time()
+            allocated.append((entry.id, entry.cookie))
+        if allocated:
+            utils.logger.info(
+                f"[CookiePool] 平台 [{platform}] 批量分配 {len(allocated)} 个Cookie: "
+                f"{[a[0] for a in allocated]}"
+            )
+        return allocated
+
+    def get_unused_cookie(self, platform: str, exclude_ids: set) -> Optional[tuple]:
+        """
+        获取一个不在 exclude_ids 中的有效 Cookie（Worker 失效后重新绑定用）。
+        返回 (cookie_id, cookie_str) 或 None。
+        """
+        valid_entries = [
+            e for e in self._pool.get(platform, [])
+            if e.valid and e.id not in exclude_ids
+        ]
+        if not valid_entries:
+            return None
+        chosen = random.choice(valid_entries)
+        chosen.last_used = time.time()
+        utils.logger.info(
+            f"[CookiePool] 平台 [{platform}] 重新分配Cookie: {chosen.id} ({chosen.note})"
+        )
+        return (chosen.id, chosen.cookie)
+
     # ────────────────── 辅助方法 ──────────────────
 
     def _find_entry(self, platform: str, cookie_id: str) -> Optional[CookieEntry]:

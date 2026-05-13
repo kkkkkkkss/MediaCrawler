@@ -57,7 +57,7 @@ def results_to_json_data(
             "content_type": _detect_content_type(platform, raw_json),
             "is_valid": is_valid == 1,
             "author": _extract_author(platform, raw_json, metrics),
-            "title": _extract_title(platform, raw_json, metrics),
+            "title": _extract_title(platform, raw_json, metrics, result.get("_title", "")),
             "praise_count": metrics.get("praise_count"),
             "reply_count": metrics.get("reply_count"),
             "visit_count": metrics.get("visit_count"),

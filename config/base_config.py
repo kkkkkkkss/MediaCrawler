@@ -145,6 +145,45 @@ URLCHECK_MAX_COMMENTS = 30
 # URL检查模式的输入来源："db"(从外部MySQL读取) | "file"(从本地txt文件读取)
 URLCHECK_INPUT_SOURCE = "db"
 
+# 多平台并行处理开关（默认开启）
+# 开启后，一批链接中涉及多个平台时，会同时为每个平台启动独立浏览器并行处理
+# 每个平台内仍逐条顺序爬取（单账号同时只有一个请求），不增加风控压力
+# 关闭后回退为逐平台顺序处理
+URLCHECK_PARALLEL_PLATFORMS = True
+
+# ==================== 同平台多浏览器并发配置 ====================
+# 每平台浏览器并发数（同平台多浏览器多账号并发）
+# 实际并发 = min(配置值, 该平台可用Cookie数)，cookie_free 平台不受Cookie数量限制
+# 推荐值参考：4GB内存→头条2/其他1，8GB→头条3~4/其他1~2，16GB+→头条4~5/其他2~3
+PLATFORM_CONCURRENCY = {
+    "dy": 1,        # 抖音：风控严格，默认单浏览器
+    "bili": 1,      # B站：默认单浏览器
+    "ks": 1,        # 快手：默认单浏览器
+    "toutiao": 3,   # 头条：不需要登录，可安全多开
+    "xhs": 1,       # 小红书：默认单浏览器
+    "wb": 1,        # 微博：默认单浏览器
+}
+
+# 每平台 URL 间隔时间（秒），覆盖全局 CRAWLER_MAX_SLEEP_SEC
+# 头条不需要Cookie，可以更快；严格平台建议 >=2s
+PLATFORM_SLEEP_SEC = {
+    "dy": 2,
+    "bili": 2,
+    "ks": 2,
+    "toutiao": 1,   # 头条无登录限制，间隔可更短
+    "xhs": 2,
+    "wb": 2,
+}
+
+# 单个Cookie/浏览器单批次最大处理URL数（软上限，防止单账号负载过高触发风控）
+# 达到上限后该浏览器停止取新URL，剩余URL由其他浏览器继续处理
+# 0 = 不限制（共享队列自然均分）
+MAX_URLS_PER_COOKIE = 0
+
+# 不需要Cookie即可访问的平台列表
+# 这些平台并发数不受Cookie数量限制，直接按 PLATFORM_CONCURRENCY 配置开浏览器
+COOKIE_FREE_PLATFORMS = ["toutiao"]
+
 # 当 URLCHECK_INPUT_SOURCE="file" 时，指定URL文件路径（每行一个URL）
 URLCHECK_INPUT_FILE = ""
 
