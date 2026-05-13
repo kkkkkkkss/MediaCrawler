@@ -75,7 +75,7 @@ async function checkApi() {
 
 onMounted(() => {
   checkApi()
-  timer = setInterval(checkApi, 15000)
+  timer = setInterval(checkApi, 60000)
 })
 onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>

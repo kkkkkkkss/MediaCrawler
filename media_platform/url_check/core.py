@@ -11,6 +11,7 @@
 
 import asyncio
 import os
+import random
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -1115,9 +1116,10 @@ class UrlCheckCrawler(AbstractCrawler):
             used_cookie_ids: 所有 Worker 已占用的 Cookie ID 集合（共享引用，用于避免重复分配）
         """
         max_per_cookie = getattr(config, "MAX_URLS_PER_COOKIE", 0)
-        platform_sleep = getattr(config, "PLATFORM_SLEEP_SEC", {}).get(
+        base_sleep = getattr(config, "PLATFORM_SLEEP_SEC", {}).get(
             platform, config.CRAWLER_MAX_SLEEP_SEC
         )
+        jitter_ratio = getattr(config, "SLEEP_JITTER_RATIO", 0.3)
         cookie_free = platform in getattr(config, "COOKIE_FREE_PLATFORMS", [])
         worker_results: List[Dict] = []
         processed_count = 0
@@ -1125,6 +1127,13 @@ class UrlCheckCrawler(AbstractCrawler):
 
         current_cookie_id = cookie_info[0] if cookie_info else None
         current_cookie_str = cookie_info[1] if cookie_info else None
+
+        # 拟人化：错峰启动，每个 Worker 随机延迟 0~BROWSER_STAGGER_MAX_SEC 秒
+        stagger_max = getattr(config, "BROWSER_STAGGER_MAX_SEC", 3.0)
+        if stagger_max > 0 and worker_id > 1:
+            delay = random.uniform(0, stagger_max)
+            utils.logger.info(f"{tag} 拟人化延迟 {delay:.1f}s 后启动浏览器")
+            await asyncio.sleep(delay)
 
         async with async_playwright() as playwright:
             client = None
@@ -1158,6 +1167,10 @@ class UrlCheckCrawler(AbstractCrawler):
                     except asyncio.QueueEmpty:
                         break
 
+                    # 将 Worker/Cookie 信息注入 row，供日志回调使用
+                    row["_worker_id"] = worker_id
+                    row["_cookie_id"] = current_cookie_id
+
                     url = row.get("url", "")
                     utils.logger.info(f"{tag} 处理 id={row['id']} url={url[:50]}...")
 
@@ -1180,16 +1193,16 @@ class UrlCheckCrawler(AbstractCrawler):
                         )
                         if new_client:
                             client = new_client
-                            # 更新当前Cookie信息
                             current_cookie_id = getattr(
                                 crawler_instance, "_rebound_cookie_id", current_cookie_id
                             )
                         else:
-                            # 无法重新绑定，停止该Worker
                             utils.logger.warning(f"{tag} Cookie失效且无备用Cookie，Worker停止")
                             break
 
-                    await asyncio.sleep(platform_sleep)
+                    # 拟人化：请求间隔添加随机抖动，模拟不规律的浏览行为
+                    actual_sleep = base_sleep * (1 + random.uniform(-jitter_ratio, jitter_ratio))
+                    await asyncio.sleep(actual_sleep)
 
             except Exception as e:
                 utils.logger.error(f"{tag} Worker异常: {e}")
@@ -1213,23 +1226,29 @@ class UrlCheckCrawler(AbstractCrawler):
 
         pw_proxy = await self._get_playwright_proxy()
 
-        # 使用非持久化浏览器（避免 persistent_context 的缓存互相干扰）
+        # 每个 Worker 使用独立 user_data_dir 避免并发冲突
         chromium = playwright.chromium
+        user_data_dir = os.path.join(
+            os.getcwd(), "browser_data", f"worker_{platform}_{worker_id}"
+        )
+
+        # 拟人化：视口尺寸随机微调，使每个浏览器指纹不同
+        vp_offset = getattr(config, "VIEWPORT_RANDOM_OFFSET", 50)
+        vp_w = 1920 + random.randint(-vp_offset, vp_offset)
+        vp_h = 1080 + random.randint(-vp_offset, vp_offset)
+
         launch_kwargs = {
+            "user_data_dir": user_data_dir,
+            "accept_downloads": True,
             "headless": config.HEADLESS,
+            "viewport": {"width": vp_w, "height": vp_h},
         }
         if pw_proxy:
             launch_kwargs["proxy"] = pw_proxy
 
-        browser = await chromium.launch(**launch_kwargs)
-        # 保存 browser 引用以便后续关闭
-        crawler_instance._worker_browser = browser
-
-        context_kwargs = {
-            "viewport": {"width": 1920, "height": 1080},
-            "user_agent": utils.get_user_agent(),
-        }
-        crawler_instance.browser_context = await browser.new_context(**context_kwargs)
+        crawler_instance.browser_context = await chromium.launch_persistent_context(
+            **launch_kwargs
+        )
         await crawler_instance.browser_context.add_init_script(path="libs/stealth.min.js")
         crawler_instance.context_page = await crawler_instance.browser_context.new_page()
 
@@ -1782,7 +1801,7 @@ class UrlCheckCrawler(AbstractCrawler):
         return client
 
     async def _cleanup_browser(self):
-        """关闭当前浏览器会话（兼容 persistent context 和 非持久化 browser）"""
+        """关闭当前浏览器会话"""
         try:
             if self.cdp_manager:
                 await self.cdp_manager.cleanup()
@@ -1790,10 +1809,6 @@ class UrlCheckCrawler(AbstractCrawler):
             elif self.browser_context:
                 await self.browser_context.close()
                 self.browser_context = None
-            # 关闭非持久化 browser 实例（Worker 模式）
-            if hasattr(self, "_worker_browser") and self._worker_browser:
-                await self._worker_browser.close()
-                self._worker_browser = None
         except Exception as e:
             utils.logger.warning(f"[UrlCheckCrawler] 清理浏览器时异常: {e}")
 

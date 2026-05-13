@@ -443,8 +443,13 @@ async def _parallel_platform_process(
             valid_str = "有效" if is_valid == 1 else "无效"
             metrics = r.get("_metrics", {})
             method = r.get("_extract_method", "-")
+            # 展示 Worker 编号和 Cookie 标识
+            w_id = r.get("_worker_id")
+            c_id = r.get("_cookie_id")
+            worker_tag = f"W{w_id}" if w_id else "W1"
+            cookie_tag = f"C{c_id}" if c_id else "无Cookie"
             info.add_log(
-                f"  [{pname}][{method}] {valid_str} | "
+                f"  [{pname}][{worker_tag}|{cookie_tag}][{method}] {valid_str} | "
                 f"赞={metrics.get('praise_count', '-')} "
                 f"评={metrics.get('reply_count', '-')} "
                 f"转={metrics.get('share_count', '-')} "
@@ -515,8 +520,12 @@ async def _sequential_platform_process(
             valid_str = "有效" if is_valid == 1 else "无效"
             metrics = r.get("_metrics", {})
             method = r.get("_extract_method", "-")
+            w_id = r.get("_worker_id")
+            c_id = r.get("_cookie_id")
+            worker_tag = f"W{w_id}" if w_id else "W1"
+            cookie_tag = f"C{c_id}" if c_id else "无Cookie"
             info.add_log(
-                f"  [{_pname}][{method}] {valid_str} | "
+                f"  [{_pname}][{worker_tag}|{cookie_tag}][{method}] {valid_str} | "
                 f"赞={metrics.get('praise_count', '-')} "
                 f"评={metrics.get('reply_count', '-')} "
                 f"转={metrics.get('share_count', '-')} "

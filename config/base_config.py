@@ -101,11 +101,11 @@ CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 30
 
 # 是否爬取二级评论（评论的回复），默认关闭
 # 旧版数据库需手动新增字段才能存储二级评论
-ENABLE_GET_SUB_COMMENTS = True
+ENABLE_GET_SUB_COMMENTS = False
 
 # ==================== 评论词云配置 ====================
 # 是否生成评论词云图
-ENABLE_GET_WORDCLOUD = True
+ENABLE_GET_WORDCLOUD = False
 
 # 自定义分词规则：键=自定义短语，值=短语分组名（用于词云精准分词）
 CUSTOM_WORDS = {
@@ -156,12 +156,12 @@ URLCHECK_PARALLEL_PLATFORMS = True
 # 实际并发 = min(配置值, 该平台可用Cookie数)，cookie_free 平台不受Cookie数量限制
 # 推荐值参考：4GB内存→头条2/其他1，8GB→头条3~4/其他1~2，16GB+→头条4~5/其他2~3
 PLATFORM_CONCURRENCY = {
-    "dy": 1,        # 抖音：风控严格，默认单浏览器
-    "bili": 1,      # B站：默认单浏览器
-    "ks": 1,        # 快手：默认单浏览器
+    "dy": 3,        # 抖音：风控严格，默认单浏览器
+    "bili": 3,      # B站：默认单浏览器
+    "ks": 3,        # 快手：默认单浏览器
     "toutiao": 3,   # 头条：不需要登录，可安全多开
     "xhs": 1,       # 小红书：默认单浏览器
-    "wb": 1,        # 微博：默认单浏览器
+    "wb": 3,        # 微博：默认单浏览器
 }
 
 # 每平台 URL 间隔时间（秒），覆盖全局 CRAWLER_MAX_SLEEP_SEC
@@ -184,6 +184,19 @@ MAX_URLS_PER_COOKIE = 0
 # 这些平台并发数不受Cookie数量限制，直接按 PLATFORM_CONCURRENCY 配置开浏览器
 COOKIE_FREE_PLATFORMS = ["toutiao"]
 
+# ==================== 拟人化反风控配置 ====================
+# 多浏览器启动间隔（秒）：每个 Worker 在 [0, 该值] 之间随机延迟后再启动浏览器
+# 避免同一 IP 同时打开多个浏览器触发风控，设为 0 则同时启动（不推荐）
+BROWSER_STAGGER_MAX_SEC = 3.0
+
+# 请求间隔抖动比例：在 PLATFORM_SLEEP_SEC 基础上添加 ±该比例的随机偏移
+# 例如 0.3 表示 ±30%，2 秒基础间隔实际为 1.4~2.6 秒随机
+SLEEP_JITTER_RATIO = 0.3
+
+# 视口尺寸随机偏移（像素）：每个浏览器视口在 1920x1080 基础上 ±该值随机微调
+# 不同视口 = 不同浏览器指纹，降低平台关联识别概率
+VIEWPORT_RANDOM_OFFSET = 50
+
 # 当 URLCHECK_INPUT_SOURCE="file" 时，指定URL文件路径（每行一个URL）
 URLCHECK_INPUT_FILE = ""
 
@@ -195,9 +208,9 @@ PLATFORM_BENCHMARK_POSTS = {
     "dy": {"url": "https://www.douyin.com/video/7628682927572997561", "content_id": "7628682927572997561"},
     "ks": {"url": "https://www.kuaishou.com/short-video/3xrenpyd68isk2q", "content_id": "3xrenpyd68isk2q"},
     "bili": {"url": "https://www.bilibili.com/video/BV1godYBUE3f", "content_id": "BV1godYBUE3f"},
-    "wb": {"url": "https://weibo.com/1195242865/5. ", "content_id": "5131010497826733"},
-    "toutiao": {"url": "https://www.toutiao.com/article/7489803498200687115", "content_id": "7489803498200687115"},
-    "xhs": {"url": "https://www.xiaohongshu.com/explore/682f2c4f000000000b03bf8d", "content_id": "682f2c4f000000000b03bf8d"},
+    "wb": {"url": "https://weibo.com/1987241375/QCIQEm6rM", "content_id": "1987241375"},
+    "toutiao": {"url": "https://www.toutiao.com/video/7629519642230538787/", "content_id": "7629519642230538787"},
+    "xhs": {"url": "https://www.xiaohongshu.com/explore/6a032226000000003502bad6", "content_id": "6a032226000000003502bad6"},
 }
 
 # 基准帖子检测结果缓存时间（秒），默认 30 分钟
