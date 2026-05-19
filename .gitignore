@@ -165,3 +165,4 @@ database/*.db
 ~$*.xlsx
 ~$*.xls
 ~$*.csv
+/docs/Bug分析与修复报告.md

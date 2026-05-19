@@ -19,7 +19,7 @@
           <div class="mode-tip">
             <span v-if="scanMode === 'force_new'">清除浏览器缓存，强制显示二维码，用于添加新账号Cookie</span>
             <span v-else-if="scanMode === 'refresh'">复用浏览器中已有的登录态，快速刷新当前账号Cookie</span>
-            <span v-else>为不需要登录的平台（如头条）生成虚拟Cookie</span>
+            <span v-else>为各平台生成虚拟Cookie（不登录，仅用于链接检测等无需登录的功能）</span>
           </div>
         </el-form-item>
         <el-form-item label="备注">
@@ -55,8 +55,8 @@
         </template>
 
         <el-row :gutter="24">
-          <!-- 左侧：二维码 -->
-          <el-col :span="12">
+          <!-- 左侧：二维码（占更大空间，确保QR码清晰可扫） -->
+          <el-col :span="16">
             <div class="qr-area">
               <div v-if="scanStatus === 'starting'" class="qr-placeholder">
                 <el-icon :size="48" class="loading-icon"><Loading /></el-icon>
@@ -85,7 +85,7 @@
           </el-col>
 
           <!-- 右侧：状态信息 -->
-          <el-col :span="12">
+          <el-col :span="8">
             <h4>平台队列</h4>
             <el-timeline>
               <el-timeline-item
@@ -264,7 +264,7 @@ onUnmounted(stopPolling)
   display: flex; flex-direction: column; align-items: center;
   justify-content: center; height: 300px; color: #909399;
 }
-.qr-img { max-width: 100%; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,.12); }
+.qr-img { max-width: 100%; min-width: 320px; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,.12); }
 .qr-tip { margin-top: 12px; color: #606266; font-size: 14px; }
 .qr-sub-tip { margin-top: 4px; font-size: 12px; color: #c0c4cc; }
 .loading-icon { animation: spin 1.2s linear infinite; }

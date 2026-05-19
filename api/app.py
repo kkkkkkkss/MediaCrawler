@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import config
 from api.routes import router
+from api.routes_report import report_router
 from api.task_manager import task_manager
 from tools import utils
 
@@ -20,6 +21,7 @@ load_dotenv()
 # 确保必要目录存在
 pathlib.Path("data/url_check/excel").mkdir(parents=True, exist_ok=True)
 pathlib.Path("data/url_check").mkdir(parents=True, exist_ok=True)
+pathlib.Path("data/report_screenshots").mkdir(parents=True, exist_ok=True)
 
 
 @asynccontextmanager
@@ -67,6 +69,7 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(report_router)
 
 
 if __name__ == "__main__":

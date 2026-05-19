@@ -98,4 +98,48 @@ export const getCallbackConfig = () => http.get('/callback/config')
 
 export const updateCallbackConfig = (data) => http.post('/callback/config', data)
 
+/* ═══════════ 举报投诉 ═══════════ */
+export const getReportReasons = (platform) =>
+  http.get('/report/reasons', { params: { platform } })
+
+export const getAllReportReasons = () =>
+  http.get('/report/reasons/all')
+
+export const reportSingle = (data) => http.post('/report/single', data)
+
+export const reportBatch = (data) => http.post('/report/batch', data)
+
+export const reportUpload = (formData) =>
+  http.post('/report/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300_000,
+  })
+
+export const reportMysql = (data) => http.post('/report/mysql', data)
+
+export const getReportProgress = (taskId, logOffset = 0) =>
+  http.get(`/report/${taskId}`, { params: { log_offset: logOffset } })
+
+export const getReportLatestScreenshot = (taskId) =>
+  http.get(`/report/${taskId}/screenshots/latest`)
+
+export const downloadReportScreenshots = (taskId) =>
+  axios.get(`${apiBase}/api/v1/report/${taskId}/screenshots`, {
+    responseType: 'blob',
+  })
+
+export const getReportResult = (taskId) =>
+  http.get(`/report/${taskId}/result`)
+
+export const cancelReportTask = (taskId) =>
+  http.post(`/report/${taskId}/cancel`)
+
+export const getReportScreenshot = (taskId, filename) =>
+  http.get(`/report/${taskId}/screenshot/${filename}`)
+
+export const downloadReportExcel = (taskId) =>
+  axios.get(`${apiBase}/api/v1/report/${taskId}/excel`, {
+    responseType: 'blob',
+  })
+
 export default http

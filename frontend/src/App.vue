@@ -20,6 +20,10 @@
           <el-icon><Link /></el-icon>
           <template #title>链接检测</template>
         </el-menu-item>
+        <el-menu-item index="/report">
+          <el-icon><Warning /></el-icon>
+          <template #title>举报投诉</template>
+        </el-menu-item>
         <el-menu-item index="/tasks">
           <el-icon><List /></el-icon>
           <template #title>任务管理</template>
@@ -44,7 +48,14 @@
       <el-header class="app-header">
         <h2 class="page-title">{{ $route.meta.title }}</h2>
         <div class="header-right">
-          <el-tag :type="apiOnline ? 'success' : 'danger'" effect="dark" size="small">
+          <el-tag
+            :type="apiOnline ? 'success' : 'danger'"
+            effect="dark"
+            size="small"
+            style="cursor:pointer"
+            @click="manualHealthCheck"
+            :title="'点击手动刷新状态\n下次自动检查: ' + nextCheckLabel"
+          >
             {{ apiOnline ? '后端已连接' : '后端离线' }}
           </el-tag>
         </div>
@@ -57,27 +68,89 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { healthCheck } from './api'
 
 const isCollapse = ref(false)
 const apiOnline = ref(false)
-let timer = null
 
-async function checkApi() {
+/*
+ * 递增式健康检查：
+ * 启动 → 1min → 1min → 连续两次 200 OK 后 → 5min → 30min → 60min → 6h → 12h → 24h → 24h...
+ * 任何一次失败则重置为 1min 间隔重新开始递增。
+ * 点击右上角状态标签可手动触发检查。
+ */
+const INTERVALS_MS = [
+  60_000,       // 1min (初始阶段，连续2次OK后进入下一级)
+  60_000,       // 1min (第二次)
+  300_000,      // 5min
+  1_800_000,    // 30min
+  3_600_000,    // 1h
+  21_600_000,   // 6h
+  43_200_000,   // 12h
+  86_400_000,   // 24h
+]
+
+let healthTimer = null
+let consecutiveOkCount = 0  // 连续成功次数
+let intervalIndex = 0       // 当前使用的间隔级别
+const nextCheckDelay = ref(0)
+
+const nextCheckLabel = computed(() => {
+  if (nextCheckDelay.value <= 0) return '检查中...'
+  const sec = Math.round(nextCheckDelay.value / 1000)
+  if (sec < 60) return `${sec}秒后`
+  const min = Math.round(sec / 60)
+  if (min < 60) return `${min}分钟后`
+  const hr = Math.round(min / 60)
+  return `${hr}小时后`
+})
+
+function getNextInterval() {
+  // 前两次检查必须连续 OK 才能升级到更长间隔
+  if (consecutiveOkCount < 2) return INTERVALS_MS[0]
+  // 已连续2次OK，从第3个间隔(5min)开始递增
+  const idx = Math.min(intervalIndex, INTERVALS_MS.length - 1)
+  return INTERVALS_MS[idx]
+}
+
+async function doHealthCheck() {
   try {
     await healthCheck()
     apiOnline.value = true
+    consecutiveOkCount++
+    // 前两次OK时 intervalIndex 不变(停留在1min)，第二次OK后开始递增
+    if (consecutiveOkCount >= 2) {
+      intervalIndex = Math.min(intervalIndex + 1, INTERVALS_MS.length - 1)
+    }
   } catch {
     apiOnline.value = false
+    // 失败时重置递增
+    consecutiveOkCount = 0
+    intervalIndex = 0
   }
+  scheduleNextCheck()
+}
+
+function scheduleNextCheck() {
+  if (healthTimer) clearTimeout(healthTimer)
+  const delay = getNextInterval()
+  nextCheckDelay.value = delay
+  healthTimer = setTimeout(doHealthCheck, delay)
+}
+
+function manualHealthCheck() {
+  if (healthTimer) clearTimeout(healthTimer)
+  doHealthCheck()
 }
 
 onMounted(() => {
-  checkApi()
-  timer = setInterval(checkApi, 60000)
+  doHealthCheck()
 })
-onUnmounted(() => { if (timer) clearInterval(timer) })
+
+onUnmounted(() => {
+  if (healthTimer) clearTimeout(healthTimer)
+})
 </script>
 
 <style>

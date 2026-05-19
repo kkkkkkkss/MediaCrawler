@@ -1,8 +1,3 @@
-
-# Repository: https://github.com/NanmiCoder/MediaCrawler/blob/main/tools/cdp_browser.py
-# GitHub: https://github.com/NanmiCoder
-
-
 import os
 import asyncio
 import socket

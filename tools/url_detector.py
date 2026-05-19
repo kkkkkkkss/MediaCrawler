@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 # URL 平台识别器
 # 根据 URL 域名自动判断所属平台，返回 (platform_code, content_id_or_none)
+# content_id 为 None 时，url_check 调度器会尝试重定向解析或原始URL直接获取
 
 import re
 from typing import Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 # 域名 → 平台代码 映射表
 # 键为域名后缀（支持子域名匹配），值为 MediaCrawler 平台代码
@@ -13,7 +14,7 @@ _DOMAIN_PLATFORM_MAP = {
     "iesdouyin.com": "dy",
     "kuaishou.com": "ks",
     "bilibili.com": "bili",
-    "b23.tv": "bili",
+    "b23.tv": "bili",          # B站短链，需重定向解析获取 BV号
     "toutiao.com": "toutiao",
     "toutiao.org": "toutiao",
     "ixigua.com": "toutiao",
@@ -64,7 +65,10 @@ def detect_platform(url: str) -> Tuple[str, Optional[str]]:
 def _extract_content_id(
     platform: str, url: str, path: str, query: str
 ) -> Optional[str]:
-    """按平台规则从 URL 路径中提取作品 ID"""
+    """
+    按平台规则从 URL 路径中提取作品 ID。
+    返回 None 表示需要调度器通过重定向解析或原始URL直接获取。
+    """
 
     if platform == "dy":
         # /video/7628682927572997561 或 /note/7637386017688071330
@@ -75,6 +79,7 @@ def _extract_content_id(
         m = re.search(r"modal_id=(\d+)", query)
         if m:
             return m.group(1)
+        # v.douyin.com/xxx/ 短链 → content_id=None，由调度器重定向解析
         return None
 
     if platform == "bili":
@@ -82,6 +87,11 @@ def _extract_content_id(
         m = re.search(r"/video/(BV[\w]+)", path)
         if m:
             return m.group(1)
+        # /video/av12345 → 旧版AV号格式
+        m = re.search(r"/video/(av\d+)", path, re.IGNORECASE)
+        if m:
+            return m.group(1)
+        # b23.tv/xxx 短链 → content_id=None，由调度器重定向解析
         return None
 
     if platform == "ks":
@@ -118,13 +128,29 @@ def _extract_content_id(
         return None
 
     if platform == "wb":
-        # /detail/xxx  或  /数字/xxx
+        # 标准格式：/{uid}/{mid} 如 /8212373973/QFjQ9EhMo
         m = re.search(r"/(\d+)/(\w+)", path)
         if m:
             return m.group(2)
+
+        # m.weibo.cn/detail/{mid}  或 weibo.com/detail/{mid}
         m = re.search(r"/detail/(\w+)", path)
         if m:
             return m.group(1)
+
+        # 长微博：/ttarticle/p/show?id=xxx → 从 query 提取文章 ID
+        if "/ttarticle/" in path:
+            params = parse_qs(query)
+            ids = params.get("id", [])
+            if ids:
+                return f"__ttarticle:{ids[0]}"
+
+        # 微博视频：/tv/show/1034:5298475685052520 → 提取 object_id
+        m = re.search(r"/tv/show/(\d+):(\d+)", path)
+        if m:
+            return f"__tv:{m.group(1)}:{m.group(2)}"
+
+        # 其他微博URL变体 → content_id=None，由调度器通过原始URL获取
         return None
 
     return None
@@ -146,3 +172,41 @@ def group_urls_by_platform(
         row["_content_id"] = content_id
         groups.setdefault(platform, []).append(row)
     return groups
+
+
+# 匹配文本中所有 http/https URL（含短链、分享链接中夹杂的文字场景）
+_URL_PATTERN = re.compile(r'https?://[^\s<>"\')\]]+')
+
+
+def extract_urls_from_text(text: str) -> list[str]:
+    """
+    从任意文本中提取所有 URL 并过滤出支持的平台链接。
+
+    适用场景：用户粘贴分享文本（含标题、时间戳、短链等混合内容），
+    自动提取其中所有可识别平台的链接。
+    短链（如 v.douyin.com）会保留，由后续引擎导航时自动重定向。
+
+    Returns: 去重后的 URL 列表（保持输入顺序）
+    """
+    if not text:
+        return []
+
+    raw_urls = _URL_PATTERN.findall(text)
+    # 清理尾部可能误匹配的标点
+    cleaned = []
+    for u in raw_urls:
+        u = u.rstrip(",.;:!?。，；：！？、）)】》")
+        if u:
+            cleaned.append(u)
+
+    # 过滤出支持的平台链接，同时去重保序
+    seen = set()
+    result = []
+    for url in cleaned:
+        if url in seen:
+            continue
+        seen.add(url)
+        platform, _ = detect_platform(url)
+        if platform != "unknown":
+            result.append(url)
+    return result

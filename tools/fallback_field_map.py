@@ -24,13 +24,34 @@ def _deep_get(d: Dict, path: str, default=None) -> Any:
 
 
 def _to_int(val: Any) -> Optional[int]:
-    """安全转 int"""
+    """安全转 int，兼容中文数字格式（如 '1.2万'、'53万播放'、'1.5亿'）"""
     if val is None:
         return None
+    if isinstance(val, int):
+        return val
+    if isinstance(val, float):
+        return int(val)
     try:
         return int(val)
     except (ValueError, TypeError):
-        return None
+        pass
+    # 中文数字单位解析：微博等平台的 play_count 可能是 "1.2万" / "1000次播放" 格式
+    if isinstance(val, str):
+        s = val.strip().rstrip("次播放浏览")
+        # 先尝试去掉中文后缀后直接解析为数字（处理 "1000次播放" 这类）
+        try:
+            return int(float(s))
+        except (ValueError, TypeError):
+            pass
+        _CN_UNITS = {"万": 10_000, "亿": 100_000_000}
+        for unit_char, multiplier in _CN_UNITS.items():
+            if unit_char in s:
+                num_part = s.replace(unit_char, "").strip()
+                try:
+                    return int(float(num_part) * multiplier)
+                except (ValueError, TypeError):
+                    pass
+    return None
 
 
 # ── 各平台的字段路径映射 ──
@@ -86,11 +107,15 @@ _PLATFORM_FIELD_PATHS: Dict[str, Dict[str, list]] = {
         ],
         "reply_count": ["mblog.comments_count", "comments_count"],
         "visit_count": [
+            # 视频播放量在 page_info.play_count 下，是微博最常见的浏览量来源
+            "mblog.page_info.play_count", "page_info.play_count",
             "mblog.reads_count", "reads_count",
             "mblog.play_count", "play_count",
         ],
         "share_count": ["mblog.reposts_count", "reposts_count"],
         "author": ["mblog.user.screen_name", "user.screen_name"],
+        # 长微博文章标题
+        "title": ["mblog._article_title", "mblog.text"],
     },
 }
 

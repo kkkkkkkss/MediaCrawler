@@ -291,7 +291,11 @@ _OVERWRITE_COLUMNS = {
     "评论数": "reply_count",
     "点赞数": "praise_count",
     "分享数": "share_count",   # "分享数"与"转发数"等效
+    "播放/浏览数": "visit_count",  # 播放/浏览数同样需要覆盖
 }
+
+# 「链接有效性」等效列名
+_VALIDITY_COLUMN_NAMES = ["链接有效性", "有效性", "是否有效"]
 
 # 「标题」等效列名正则匹配模式（任一匹配即复用）
 import re as _re
@@ -409,10 +413,11 @@ def merge_results_to_excel(
         if cn_name in header_map:
             overwrite_col_indices[cn_name] = header_map[cn_name]
 
-    # ─── 定位已有的标题列、作者列和平台列 ───
+    # ─── 定位已有的标题列、作者列、平台列和有效性列 ───
     title_col_idx = _find_title_col(header_map)
     author_col_idx = _find_equivalent_col(header_map, _AUTHOR_COLUMN_NAMES)
     platform_col_idx = _find_equivalent_col(header_map, _PLATFORM_COLUMN_NAMES)
+    validity_col_idx = _find_equivalent_col(header_map, _VALIDITY_COLUMN_NAMES)
 
     # ─── 计算需要追加的缺失列 ───
     append_cols: List[tuple] = []
@@ -436,7 +441,8 @@ def merge_results_to_excel(
         elif key == "visit_count":
             already_exists = "播放/浏览数" in header_map
         elif key == "is_valid":
-            already_exists = "链接有效性" in header_map
+            # 有效性列已单独处理覆盖逻辑，只要表头存在任一等效列名即跳过追加
+            already_exists = validity_col_idx is not None
 
         if not already_exists:
             append_cols.append((cn_name, key, next_col))
@@ -497,7 +503,14 @@ def merge_results_to_excel(
                     value=_PLATFORM_NAMES.get(platform, platform)
                 )
 
-        # ⑤ 追加的新列
+        # ⑤ 链接有效性列：始终覆盖（已存在的列也要更新，修复原值为空时不回填的问题）
+        if validity_col_idx is not None:
+            ws.cell(
+                row=row_idx, column=validity_col_idx + 1,
+                value="有效" if is_valid == 1 else "无效",
+            )
+
+        # ⑥ 追加的新列
         for cn_name, key, col_idx in append_cols:
             if key == "is_valid":
                 val = "有效" if is_valid == 1 else "无效"

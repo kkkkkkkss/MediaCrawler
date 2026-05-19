@@ -13,6 +13,7 @@ import asyncio
 import os
 import random
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import httpx
 from playwright.async_api import (
@@ -626,11 +627,44 @@ class UrlCheckCrawler(AbstractCrawler):
             - "content_gone": 内容不存在/已删除 → Cookie 正常，不计入失败
             - "network_error": 网络超时等 → 不计入Cookie失败
         """
-        if not content_id:
-            utils.logger.warning(f"[UrlCheckCrawler] 无法从 URL 提取 content_id: {url}")
+        # --- 短链/变体URL重定向解析 ---
+        # 微博非标准URL（ttarticle长微博、tv/show视频）：通过原始URL直接获取
+        if platform == "wb" and (not content_id or str(content_id).startswith("__")):
+            utils.logger.info(
+                f"[UrlCheckCrawler] 微博非标准URL，通过原始URL获取: {url}"
+            )
+            try:
+                result = await client.get_note_info_by_url(url)
+                if result:
+                    mblog = result.get("mblog", {})
+                    real_mid = mblog.get("mid") or mblog.get("id")
+                    if real_mid and row is not None:
+                        row["_content_id"] = str(real_mid)
+                    return result
+            except Exception as e:
+                utils.logger.warning(
+                    f"[UrlCheckCrawler] 微博原始URL获取失败: {url}, err: {e}"
+                )
             if row is not None:
                 row["_fetch_fail_reason"] = self._FETCH_FAIL_CONTENT
             return None
+
+        if not content_id:
+            # 抖音/B站等短链（v.douyin.com、b23.tv）需要重定向解析
+            if platform in ("dy", "bili"):
+                resolved_id = await self._resolve_short_link(url, platform)
+                if resolved_id:
+                    content_id = resolved_id
+                    utils.logger.info(
+                        f"[UrlCheckCrawler] 短链重定向解析: {url} → {content_id}"
+                    )
+            if not content_id:
+                utils.logger.warning(
+                    f"[UrlCheckCrawler] 无法从 URL 提取 content_id: {url}"
+                )
+                if row is not None:
+                    row["_fetch_fail_reason"] = self._FETCH_FAIL_CONTENT
+                return None
 
         # 抖音短链（iesdouyin.com）的 content_id 可能需要通过重定向获取真实 ID
         if platform == "dy" and "iesdouyin.com" in url:
@@ -930,6 +964,34 @@ class UrlCheckCrawler(AbstractCrawler):
                     return resolved
         except Exception as e:
             utils.logger.warning(f"[UrlCheckCrawler] 快手短链解析失败: {e}")
+        return None
+
+    async def _resolve_short_link(self, url: str, platform: str) -> Optional[str]:
+        """
+        通用短链重定向解析（b23.tv、v.douyin.com 等）。
+        跟踪302重定向到最终URL，再用 url_detector 提取 content_id。
+        """
+        from tools.url_detector import _extract_content_id
+        try:
+            async with httpx.AsyncClient(
+                follow_redirects=True, timeout=10, verify=False,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            ) as client:
+                resp = await client.get(url)
+                final_url = str(resp.url)
+                parsed = urlparse(final_url)
+                content_id = _extract_content_id(
+                    platform, final_url, parsed.path, parsed.query or ""
+                )
+                if content_id:
+                    utils.logger.info(
+                        f"[UrlCheckCrawler] 通用短链解析: {url[:60]} → {content_id}"
+                    )
+                    return content_id
+        except Exception as e:
+            utils.logger.warning(
+                f"[UrlCheckCrawler] 通用短链解析失败: {url[:60]}, err: {e}"
+            )
         return None
 
     async def _recover_context_page(self, platform: str):

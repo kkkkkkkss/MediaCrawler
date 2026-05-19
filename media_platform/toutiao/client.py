@@ -175,85 +175,93 @@ class ToutiaoClient(AbstractApiClient):
                     const parseNum = (text) => {
                         if (!text) return null;
                         text = text.trim().replace(/,/g, '');
-                        // 处理 "1.2万" 格式
                         let m = text.match(/([\d.]+)\\s*万/);
                         if (m) return Math.round(parseFloat(m[1]) * 10000);
                         m = text.match(/([\d.]+)\\s*亿/);
                         if (m) return Math.round(parseFloat(m[1]) * 100000000);
-                        m = text.match(/^(\d+)$/);
+                        m = text.match(/(\d+)/);
                         if (m) return parseInt(m[1]);
                         return null;
                     };
 
-                    // 策略1：查找带有特定属性或类名的按钮/元素
-                    const allElements = document.querySelectorAll(
-                        '[class*="like"], [class*="comment"], [class*="share"], ' +
-                        '[class*="digg"], [class*="collect"], [class*="play"], ' +
-                        '[class*="read"], [class*="forward"], [class*="favour"], ' +
-                        '[class*="count"], [data-log-click]'
-                    );
-                    for (const el of allElements) {
-                        const text = (el.textContent || '').trim();
-                        const rawCls = el.className;
-                        const cls = (typeof rawCls === 'string' ? rawCls : (rawCls.baseVal || '')).toLowerCase();
-                        const num = parseNum(text.replace(/[^\\d.万亿]/g, ''));
-
-                        if (num !== null) {
-                            if ((cls.includes('like') || cls.includes('digg'))
-                                && result.praise_count === null)
-                                result.praise_count = num;
-                            else if (cls.includes('comment') && result.reply_count === null)
-                                result.reply_count = num;
-                            // else if ((cls.includes('share') || cls.includes('forward'))
-                            //          && result.share_count === null)
-                            //     result.share_count = num;
-                            // else if ((cls.includes('play') || cls.includes('read'))
-                            //          && result.visit_count === null)
-                            //     result.visit_count = num;
+                    /* ────────────────────────────────────
+                     * 策略1：精确类名选择器（视频页 & 图文页共用）
+                     * 直接取 .like-count / .comment-count / .favour-count / .views-count
+                     * 这些是头条互动栏的固定结构，不会误匹配其他区域
+                     * ──────────────────────────────────── */
+                    const exactMap = [
+                        {sel: '.like-count',    field: 'praise_count'},
+                        {sel: '.comment-count', field: 'reply_count'},
+                        {sel: '.favour-count',  field: 'share_count'},
+                        {sel: '.views-count',   field: 'visit_count'},
+                    ];
+                    for (const {sel, field} of exactMap) {
+                        const el = document.querySelector(sel);
+                        if (el) {
+                            const num = parseNum(el.textContent);
+                            // 文本是纯标签（"赞"/"评论"/"收藏"）且无数字时，视为0
+                            result[field] = (num !== null) ? num : 0;
                         }
                     }
 
-                    // 策略2：扫描全文匹配"XX评论"、"XX点赞"模式
-                    const bodyText = document.body?.innerText || '';
-                    const patterns = [
-                        {field: 'reply_count', regex: /([\d.]+[万亿]?)\\s*(?:条)?\\s*评论/},
-                        {field: 'reply_count', regex: /评论\\s*([\d.]+[万亿]?)/},
-                        {field: 'praise_count', regex: /([\d.]+[万亿]?)\\s*(?:个)?\\s*(?:点赞|赞)/},
-                        {field: 'praise_count', regex: /(?:点赞|赞)\\s*([\d.]+[万亿]?)/},
-                        // {field: 'visit_count', regex: /([\d.]+[万亿]?)\\s*(?:次)?\\s*(?:播放|阅读|浏览)/},
-                        // {field: 'visit_count', regex: /(?:播放|阅读|浏览)\\s*([\d.]+[万亿]?)/},
-                        // {field: 'share_count', regex: /([\d.]+[万亿]?)\\s*(?:次)?\\s*(?:转发|分享)/},
-                        // {field: 'share_count', regex: /(?:转发|分享)\\s*([\d.]+[万亿]?)/},
-                    ];
-                    for (const {field, regex} of patterns) {
-                        if (result[field] !== null) continue;
-                        const m = bodyText.match(regex);
+                    /* ────────────────────────────────────
+                     * 策略2：actions-list 结构（视频页 ul.actions-list）
+                     * 按钮顺序固定: 点赞→评论→收藏
+                     * ──────────────────────────────────── */
+                    if (result.praise_count === null) {
+                        const actionsList = document.querySelector('ul.actions-list');
+                        if (actionsList) {
+                            const buttons = actionsList.querySelectorAll('.action-item');
+                            const fields = ['praise_count', 'reply_count', 'share_count'];
+                            buttons.forEach((btn, i) => {
+                                if (i < fields.length && result[fields[i]] === null) {
+                                    const num = parseNum(btn.textContent);
+                                    result[fields[i]] = (num !== null) ? num : 0;
+                                }
+                            });
+                        }
+                    }
+
+                    /* ────────────────────────────────────
+                     * 策略3：图文页 article-interaction 区域
+                     * 类名含 digg/comment/share 但必须在互动栏容器内
+                     * 排除作者信息区（含"粉丝"字样的父元素）
+                     * ──────────────────────────────────── */
+                    if (result.praise_count === null) {
+                        const interactBars = document.querySelectorAll(
+                            '[class*="interact"], [class*="article-bar"], [class*="bottom-bar"]'
+                        );
+                        for (const bar of interactBars) {
+                            if ((bar.textContent || '').includes('粉丝')) continue;
+                            const items = bar.querySelectorAll('button, a, span, div');
+                            for (const item of items) {
+                                const rawCls = item.className;
+                                const cls = (typeof rawCls === 'string'
+                                    ? rawCls : (rawCls.baseVal || '')).toLowerCase();
+                                const num = parseNum(item.textContent);
+                                const val = (num !== null) ? num : 0;
+                                if ((cls.includes('digg') || cls.includes('like'))
+                                    && result.praise_count === null)
+                                    result.praise_count = val;
+                                else if (cls.includes('comment')
+                                    && result.reply_count === null)
+                                    result.reply_count = val;
+                            }
+                        }
+                    }
+
+                    /* ────────────────────────────────────
+                     * 策略4："播放 NNN" 文本提取（视频页播放量）
+                     * ──────────────────────────────────── */
+                    if (result.visit_count === null) {
+                        const bodyText = document.body?.innerText || '';
+                        const m = bodyText.match(/播放\\s*([\d.]+[万亿]?)/);
                         if (m) {
                             const num = parseNum(m[1]);
-                            if (num !== null) result[field] = num;
+                            if (num !== null) result.visit_count = num;
                         }
                     }
 
-                    // 策略3：UGC/图文分享页底部操作栏（赞 评论 转发 依次排列）
-                    const actionBars = document.querySelectorAll(
-                        '[class*="action"], [class*="toolbar"], [class*="interact"], ' +
-                        '[class*="bottom-bar"], [class*="footer"]'
-                    );
-                    for (const bar of actionBars) {
-                        const spans = bar.querySelectorAll('span, div, a, button');
-                        const nums = [];
-                        for (const s of spans) {
-                            const t = (s.textContent || '').trim();
-                            const n = parseNum(t);
-                            if (n !== null) nums.push(n);
-                        }
-                        if (nums.length >= 2) {
-                            if (result.praise_count === null) result.praise_count = nums[0];
-                            if (result.reply_count === null && nums.length > 1) result.reply_count = nums[1];
-                            // if (result.share_count === null && nums.length > 2) result.share_count = nums[2];
-                            break;
-                        }
-                    }
                     return result;
                 }
             """)

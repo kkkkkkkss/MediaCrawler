@@ -263,6 +263,361 @@ class WeiboClient(ProxyRefreshMixin):
                 utils.logger.info(f"[WeiboClient.get_note_info_by_id] $render_data value not found")
                 return dict()
 
+    async def get_note_info_by_url(self, original_url: str) -> Dict:
+        """
+        通过原始URL获取微博详情，用于 ttarticle/tv/show 等非标准URL。
+        策略按优先级：
+          1. ttarticle → 专用 API（无需登录）
+          2. httpx重定向 → 找到标准mid → 走标准API
+          3. Playwright渲染（兜底，适用于 tv/show 等 SPA 页面）
+        """
+        # ttarticle（长微博）→ 专用文章详情API
+        if "/ttarticle/" in original_url:
+            return await self._fetch_ttarticle(original_url)
+
+        # tv/show（微博视频）→ 先尝试重定向找mid，失败则Playwright渲染
+        if "/tv/show/" in original_url:
+            return await self._fetch_tv_show(original_url)
+
+        # 其他未知格式 → httpx重定向兜底
+        try:
+            async with make_async_client(proxy=self.proxy) as client:
+                resp = await client.request(
+                    "GET", original_url, timeout=self.timeout,
+                    headers=self.headers, follow_redirects=True,
+                )
+                final_url = str(resp.url)
+                mid = self._extract_mid_from_url(final_url)
+                if mid:
+                    return await self.get_note_info_by_id(mid)
+                result = self._parse_render_data(resp.text)
+                if result:
+                    return result
+        except Exception as e:
+            utils.logger.warning(
+                f"[WeiboClient.get_note_info_by_url] 兜底获取失败: {e}"
+            )
+        return dict()
+
+    async def _fetch_ttarticle(self, url: str) -> Dict:
+        """
+        长微博文章：用 ttarticle/x/m/aj/detail API 获取文章详情。
+        此API无需登录，返回 title/author/read_count 等。
+        """
+        from urllib.parse import urlparse, parse_qs as _parse_qs
+
+        parsed = urlparse(url)
+        params = _parse_qs(parsed.query)
+        article_id = (params.get("id") or [None])[0]
+        if not article_id:
+            utils.logger.warning(f"[WeiboClient._fetch_ttarticle] 无法提取文章ID: {url}")
+            return dict()
+
+        api_url = f"https://weibo.com/ttarticle/x/m/aj/detail?id={article_id}"
+        try:
+            async with make_async_client(proxy=self.proxy) as client:
+                resp = await client.request(
+                    "GET", api_url, timeout=self.timeout,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X)",
+                        "Referer": "https://card.weibo.com/",
+                    },
+                )
+                data = resp.json()
+                if str(data.get("code")) == "100000":
+                    article = data.get("data", {})
+                    userinfo = article.get("userinfo", {})
+                    # 构造兼容 fallback_field_map 的 mblog 格式
+                    mblog = {
+                        "text": article.get("title", ""),
+                        "reads_count": article.get("read_count"),
+                        "user": {
+                            "screen_name": (
+                                userinfo.get("screen_name")
+                                or article.get("writer", {}).get("screen_name", "")
+                            ),
+                        },
+                        "created_at": article.get("complete_create_at", ""),
+                        # 长微博文章本身不直接暴露点赞/评论/转发（需要关联mblog）
+                        "_article_id": article_id,
+                        "_article_title": article.get("title", ""),
+                    }
+                    utils.logger.info(
+                        f"[WeiboClient._fetch_ttarticle] 文章获取成功: "
+                        f"title={article.get('title','')[:30]}, "
+                        f"read_count={article.get('read_count')}"
+                    )
+                    return {"mblog": mblog}
+                else:
+                    utils.logger.warning(
+                        f"[WeiboClient._fetch_ttarticle] API返回异常: {data.get('msg')}"
+                    )
+        except Exception as e:
+            utils.logger.error(
+                f"[WeiboClient._fetch_ttarticle] 请求失败: {e}"
+            )
+        return dict()
+
+    async def _fetch_tv_show(self, url: str) -> Dict:
+        """
+        微博视频页：用 h5.video.weibo.com/api/component POST 接口获取视频指标。
+        该API只需 SUB/SUBP cookie（不需要 XSRF-TOKEN），但要求Cookie具备
+        krvideo服务的SSO授权——并非所有m.weibo.cn的Cookie都满足。
+        当当前Cookie返回302时，自动从Cookie池中取其他wb Cookie逐个尝试，
+        因为此处是纯httpx调用，不占用浏览器资源。
+        """
+        m = re.search(r"(?:tv/show/|/show/)(\d+:\d+)", url)
+        object_id = m.group(1) if m else None
+        if not object_id:
+            utils.logger.warning(f"[WeiboClient._fetch_tv_show] 无法提取 object_id: {url}")
+            return dict()
+
+        # 收集所有可用的wb Cookie（当前的 + 池中其他的）
+        cookie_dicts_to_try = [self.cookie_dict]
+        try:
+            from proxy.cookie_pool import cookie_pool
+            for entry in cookie_pool._pool.get("wb", []):
+                if not entry.valid or not entry.cookie:
+                    continue
+                cd = {}
+                for pair in entry.cookie.split(";"):
+                    pair = pair.strip()
+                    if "=" in pair:
+                        k, _, v = pair.partition("=")
+                        cd[k.strip()] = v.strip()
+                # 跳过跟当前Cookie相同的（通过SUB值判断）
+                if cd.get("SUB") == self.cookie_dict.get("SUB"):
+                    continue
+                cookie_dicts_to_try.append(cd)
+        except Exception:
+            pass
+
+        for i, cd in enumerate(cookie_dicts_to_try):
+            result = await self._try_tv_show_api(object_id, cd)
+            if result is not None:
+                return result
+            if i < len(cookie_dicts_to_try) - 1:
+                utils.logger.info(
+                    f"[WeiboClient._fetch_tv_show] Cookie#{i}缺SSO授权，尝试下一个"
+                )
+        utils.logger.warning(
+            f"[WeiboClient._fetch_tv_show] 所有Cookie均无法访问视频API: {object_id}"
+        )
+        return dict()
+
+    async def _try_tv_show_api(
+        self, object_id: str, cookie_dict: Dict
+    ) -> Optional[Dict]:
+        """
+        尝试用指定Cookie调用h5视频组件API。
+        返回 dict(成功) / None(302/失败，需换Cookie)。
+        """
+        import json as _json
+        from urllib.parse import quote
+
+        api_url = (
+            f"https://h5.video.weibo.com/api/component"
+            f"?page={quote(f'/show/{object_id}')}"
+        )
+        cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
+        api_headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15",
+            "Referer": f"https://h5.video.weibo.com/show/{object_id}",
+            "Origin": "https://h5.video.weibo.com",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json, text/plain, */*",
+            "page-referer": f"/show/{object_id}",
+            "Cookie": cookie_str,
+        }
+        post_body = f'data={_json.dumps({"Component_Play_Playinfo": {"oid": object_id}})}'
+
+        try:
+            async with make_async_client(proxy=self.proxy) as client:
+                resp = await client.request(
+                    "POST", api_url, timeout=self.timeout,
+                    headers=api_headers, content=post_body,
+                    follow_redirects=False,
+                )
+                # 302 → Cookie缺少krvideo SSO授权
+                if resp.status_code == 302:
+                    return None
+                raw_body = resp.text
+                if not raw_body or not raw_body.strip():
+                    return None
+                data = resp.json()
+                if str(data.get("code")) == "100000":
+                    play_info = data.get("data", {}).get("Component_Play_Playinfo", {})
+                    if play_info:
+                        mblog = {
+                            "mid": play_info.get("mid"),
+                            "attitudes_count": play_info.get("attitudes_count", 0),
+                            "comments_count": play_info.get("comments_count", 0),
+                            "reposts_count": play_info.get("reposts_count", 0),
+                            "play_count": play_info.get("play_count", 0),
+                            "text": play_info.get("title", ""),
+                            "user": {"screen_name": play_info.get("author", "")},
+                            "page_info": {
+                                "play_count": play_info.get("play_count", 0),
+                            },
+                        }
+                        utils.logger.info(
+                            f"[WeiboClient._fetch_tv_show] 视频API成功: "
+                            f"mid={play_info.get('mid')}, "
+                            f"author={play_info.get('author')}, "
+                            f"likes={play_info.get('attitudes_count')}, "
+                            f"comments={play_info.get('comments_count')}"
+                        )
+                        return {"mblog": mblog}
+                    utils.logger.warning(
+                        f"[WeiboClient._fetch_tv_show] API无 Playinfo: {object_id}"
+                    )
+                    return dict()
+                else:
+                    utils.logger.warning(
+                        f"[WeiboClient._fetch_tv_show] API异常: code={data.get('code')}, "
+                        f"msg={data.get('msg')}"
+                    )
+                    return dict()
+        except Exception as e:
+            utils.logger.error(
+                f"[WeiboClient._fetch_tv_show] 请求失败: {e}"
+            )
+            return dict()
+
+    async def _fetch_via_playwright(self, url: str) -> Dict:
+        """
+        用 Playwright 新开标签页渲染微博页面，从 DOM/JS 变量提取指标。
+        先将Cookie注入到目标域名，确保登录态生效。
+        """
+        page = None
+        try:
+            ctx = self.playwright_page.context
+
+            # 将 m.weibo.cn cookie 复制到 weibo.com 域，确保PC页面登录态
+            await self._inject_cookies_for_domain(ctx, url)
+
+            page = await ctx.new_page()
+            await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+            # SPA页面需要较长渲染时间
+            await asyncio.sleep(5)
+
+            # 检查页面最终URL是否跳转到了标准微博页
+            final_url = page.url
+            mid = self._extract_mid_from_url(final_url)
+            if mid:
+                utils.logger.info(
+                    f"[WeiboClient._fetch_via_playwright] 页面跳转到 mid={mid}"
+                )
+                await page.close()
+                page = None
+                return await self.get_note_info_by_id(mid)
+
+            # 从页面 JS 变量提取数据
+            metrics = await page.evaluate("""() => {
+                // $render_data（移动版页面）
+                if (window.$render_data) {
+                    const rd = Array.isArray(window.$render_data)
+                        ? window.$render_data[0] : window.$render_data;
+                    if (rd && rd.status) return {mblog: rd.status};
+                }
+                // __INITIAL_STATE__（Vue SPA）
+                if (window.__INITIAL_STATE__) {
+                    const s = window.__INITIAL_STATE__;
+                    if (s.mblog) return {mblog: s.mblog};
+                    if (s.status) return {mblog: s.status};
+                }
+                return null;
+            }""")
+
+            if metrics and metrics.get("mblog"):
+                utils.logger.info(
+                    f"[WeiboClient._fetch_via_playwright] 从JS变量提取成功: {url[:60]}"
+                )
+                return metrics
+
+            utils.logger.warning(
+                f"[WeiboClient._fetch_via_playwright] 无法提取数据: {url[:60]}, "
+                f"final_url={final_url[:80]}"
+            )
+            return dict()
+
+        except Exception as e:
+            utils.logger.error(
+                f"[WeiboClient._fetch_via_playwright] 渲染失败: {url[:60]}, err: {e}"
+            )
+            return dict()
+        finally:
+            if page:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+
+    async def _inject_cookies_for_domain(
+        self, ctx: BrowserContext, target_url: str
+    ):
+        """
+        将当前 cookie_dict 中的关键Cookie注入到目标URL和相关域名，
+        解决 m.weibo.cn cookie 不能跨域到 weibo.com / h5.video.weibo.com 的问题。
+        """
+        from urllib.parse import urlparse
+        parsed = urlparse(target_url)
+        # 同时注入到 .weibo.com 和 .weibo.cn 两个顶级域，覆盖所有微博子域名
+        target_domains = [".weibo.com", ".weibo.cn"]
+        if parsed.hostname and parsed.hostname not in ("weibo.com", "weibo.cn"):
+            target_domains.append(f".{parsed.hostname}")
+
+        key_cookies = ["SUB", "SUBP", "SSOLoginState", "XSRF-TOKEN", "login_sid_t"]
+        cookies_to_add = []
+        for domain in target_domains:
+            for name in key_cookies:
+                value = self.cookie_dict.get(name)
+                if value:
+                    cookies_to_add.append({
+                        "name": name,
+                        "value": value,
+                        "domain": domain,
+                        "path": "/",
+                    })
+        if cookies_to_add:
+            await ctx.add_cookies(cookies_to_add)
+            utils.logger.info(
+                f"[WeiboClient] 注入 {len(cookies_to_add)} 个Cookie到 {target_domains}"
+            )
+
+    @staticmethod
+    def _extract_mid_from_url(url: str) -> Optional[str]:
+        """从URL路径中提取微博标准 mid（如 /detail/xxx 或 /{uid}/{mid}）"""
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            path = parsed.path
+
+            m = re.search(r"/detail/(\w+)", path)
+            if m:
+                return m.group(1)
+            m = re.search(r"/(\d+)/(\w+)", path)
+            if m:
+                return m.group(2)
+        except Exception:
+            pass
+        return None
+
+    def _parse_render_data(self, html: str) -> Optional[Dict]:
+        """从 m.weibo.cn 页面提取 $render_data 中的 status 数据"""
+        match = re.search(
+            r'var \$render_data = (\[.*?\])\[0\]', html, re.DOTALL
+        )
+        if match:
+            try:
+                render_list = json.loads(match.group(1))
+                status = render_list[0].get("status")
+                if status:
+                    return {"mblog": status}
+            except (json.JSONDecodeError, IndexError, TypeError):
+                pass
+        return None
+
     async def get_note_image(self, image_url: str) -> bytes:
         image_url = image_url[8:]  # Remove https://
         sub_url = image_url.split("/")

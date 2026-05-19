@@ -159,7 +159,7 @@ PLATFORM_CONCURRENCY = {
     "dy": 3,        # 抖音：风控严格，默认单浏览器
     "bili": 3,      # B站：默认单浏览器
     "ks": 3,        # 快手：默认单浏览器
-    "toutiao": 3,   # 头条：不需要登录，可安全多开
+    "toutiao": 8,   # 头条：不需要登录，可安全多开
     "xhs": 1,       # 小红书：默认单浏览器
     "wb": 3,        # 微博：默认单浏览器
 }
@@ -263,6 +263,26 @@ CALLBACK_RETRY_INTERVALS = [5, 15, 30]
 
 # 单个 Cookie/IP 连续请求失败多少次后自动切换代理
 PROXY_SWITCH_THRESHOLD = 3
+
+# ==================== 举报投诉配置 ====================
+# 举报时浏览器是否无头模式（False=有头，可看到浏览器操作过程，调试时建议关闭）
+REPORT_HEADLESS = True
+
+# 是否并行举报（True=同一链接的多个Cookie同时开浏览器举报，False=严格串行逐个执行）
+REPORT_PARALLEL = True
+
+# 并行模式下最大同时浏览器数（防止内存爆炸，建议 <= CPU核心数）
+REPORT_MAX_CONCURRENCY = 3
+
+# 举报操作间隔秒数范围（随机取值 + SLEEP_JITTER_RATIO 抖动，防风控）
+REPORT_INTERVAL_SEC = (5, 10)
+
+# 单次举报操作超时（秒），超时后截图并标记失败
+# 抖音等平台需要等弹窗关闭+内容加载，30秒可能不够
+REPORT_TIMEOUT_SEC = 60
+
+# 举报失败后重试次数（0=不重试，1=失败后刷新页面重试一次）
+REPORT_RETRY_COUNT = 1
 
 # ==================== 导入各平台专属配置 ====================
 from .bilibili_config import *

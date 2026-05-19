@@ -1,8 +1,3 @@
-
-# Repository: https://github.com/NanmiCoder/MediaCrawler/blob/main/tools/browser_launcher.py
-# GitHub: https://github.com/NanmiCoder
-
-
 import os
 import platform
 import subprocess

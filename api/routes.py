@@ -619,17 +619,23 @@ _SCAN_PLATFORM_CONFIG = {
     "toutiao": {
         "name": "今日头条",
         "url": "https://www.toutiao.com",
-        "needs_login": False,  # 头条不需要登录也能检测链接
-        "login_selectors": [],
-        "check_cookie": "ttwid",
-        "check_cookie_min_len": 5,
+        "needs_login": True,
+        # 头条登录按钮在视口外（x>3000），需用 JS 点击；js: 前缀触发 evaluate
+        "login_selectors": [
+            "js:a.login-button",
+            "text=登录",
+            "text=立即登录",
+        ],
+        # uid_tt 仅在扫码登录成功后才出现，ttwid 是页面自动生成的跟踪 cookie 不能用于判断登录
+        "check_cookie": "uid_tt",
+        "check_cookie_min_len": 3,
     },
 }
 
 # 默认扫码平台顺序（不含小红书）
-_DEFAULT_SCAN_PLATFORMS = ["dy", "ks", "bili", "wb"]
-# 不需要登录的平台单独处理
-_NO_LOGIN_PLATFORMS = ["toutiao"]
+_DEFAULT_SCAN_PLATFORMS = ["dy", "ks", "bili", "wb", "toutiao"]
+# 不需要登录的平台单独处理（当前所有平台都改为真实扫码）
+_NO_LOGIN_PLATFORMS: list[str] = []
 
 
 @router.post("/cookies/scan/start", summary="启动扫码登录", tags=["扫码登录"])
@@ -655,11 +661,10 @@ async def start_scan_login(platform: str = "all", note: str = "", scan_mode: str
     # 确定扫码平台列表
     if platform == "all":
         if scan_mode == "virtual":
-            # 虚拟Cookie模式只处理不需要登录的平台
-            platforms_queue = list(_NO_LOGIN_PLATFORMS)
+            # 虚拟Cookie模式：为所有平台生成虚拟Cookie（用于无需登录的场景如链接检测）
+            platforms_queue = list(_DEFAULT_SCAN_PLATFORMS)
         else:
-            # 扫码/刷新模式包含所有平台（不需登录的平台会自动走虚拟Cookie流程）
-            platforms_queue = list(_DEFAULT_SCAN_PLATFORMS) + list(_NO_LOGIN_PLATFORMS)
+            platforms_queue = list(_DEFAULT_SCAN_PLATFORMS)
     else:
         if platform not in _SCAN_PLATFORM_CONFIG:
             raise HTTPException(status_code=400, detail=f"不支持的平台: {platform}，可选: {list(_SCAN_PLATFORM_CONFIG.keys())} 或 'all'")
@@ -725,7 +730,17 @@ async def get_scan_qrcode(session_id: str):
         return JSONResponse({"status": "error", "message": "页面未就绪"})
 
     try:
-        screenshot = await page.screenshot(type="png")
+        # 裁剪截图：取页面中央偏大区域（覆盖各平台登录弹窗/QR码位置）
+        vp = page.viewport_size or {"width": 1280, "height": 800}
+        w, h = vp["width"], vp["height"]
+        # 取中心 80% 宽 × 85% 高，确保完整覆盖头条等平台的宽登录弹窗
+        clip_w, clip_h = int(w * 0.8), int(h * 0.85)
+        clip_x = (w - clip_w) // 2
+        clip_y = int(h * 0.05)
+        screenshot = await page.screenshot(
+            type="png",
+            clip={"x": clip_x, "y": clip_y, "width": clip_w, "height": clip_h},
+        )
         b64 = base64.b64encode(screenshot).decode()
         current_plat = session.get("current_platform", "")
         plat_name = _SCAN_PLATFORM_CONFIG.get(current_plat, {}).get("name", current_plat)
@@ -823,20 +838,36 @@ async def cancel_scan_session(session_id: str):
 
 
 async def _try_click_login_button(page, platform: str, selectors: list):
-    """尝试点击平台登录按钮，触发登录弹窗/二维码显示"""
+    """尝试点击平台登录按钮，触发登录弹窗/二维码显示。
+    JS 选择器（js:前缀）会轮询最多 8 秒等待元素出现（适用于动态渲染的页面如头条）。
+    """
     for selector in selectors:
         try:
-            if selector.startswith("text="):
-                # 文本匹配模式
+            if selector.startswith("js:"):
+                css_sel = selector[3:]
+                # 轮询等待元素出现后再点击（页面可能还在动态渲染登录按钮）
+                for attempt in range(6):
+                    clicked = await page.evaluate(f'''() => {{
+                        let el = document.querySelector('{css_sel}');
+                        if (el) {{ el.click(); return true; }}
+                        return false;
+                    }}''')
+                    if clicked:
+                        utils.logger.info(f"[ScanAPI] {platform} JS点击登录按钮成功: {css_sel}")
+                        await asyncio.sleep(2)
+                        return True
+                    await asyncio.sleep(1.5)
+            elif selector.startswith("text="):
                 locator = page.get_by_text(selector[5:], exact=False).first
             else:
                 locator = page.locator(selector).first
 
-            if await locator.is_visible(timeout=3000):
-                await locator.click()
-                utils.logger.info(f"[ScanAPI] {platform} 点击登录按钮成功: {selector}")
-                await asyncio.sleep(2)
-                return True
+            if not selector.startswith("js:"):
+                if await locator.is_visible(timeout=3000):
+                    await locator.click()
+                    utils.logger.info(f"[ScanAPI] {platform} 点击登录按钮成功: {selector}")
+                    await asyncio.sleep(2)
+                    return True
         except Exception:
             continue
     utils.logger.info(f"[ScanAPI] {platform} 未找到登录按钮，可能已显示登录界面")
@@ -901,12 +932,34 @@ async def _run_scan_session_serial(session_id: str, platforms: list, note: str, 
                 except Exception as e:
                     utils.logger.warning(f"[ScanAPI] 清除浏览器缓存失败: {e}")
 
+            # 使用 Windows UA + stealth 反检测，防止抖音等平台检测到 Linux 环境或自动化特征
+            _scan_user_agent = (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            )
             browser_context = await pw.chromium.launch_persistent_context(
                 user_data_dir=user_data_dir,
                 headless=False,
                 viewport={"width": 1280, "height": 800},
                 accept_downloads=True,
+                user_agent=_scan_user_agent,
             )
+
+            # 注入反检测脚本 + 平台指纹覆写（Linux 上 navigator.platform 默认是 "Linux x86_64"，需伪装为 Windows）
+            _stealth_js_path = os.path.join(os.getcwd(), "libs", "stealth.min.js")
+            if os.path.exists(_stealth_js_path):
+                await browser_context.add_init_script(path=_stealth_js_path)
+            await browser_context.add_init_script("""
+                Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+                Object.defineProperty(navigator, 'userAgentData', {
+                    get: () => ({ platform: 'Windows', brands: [
+                        {brand: 'Chromium', version: '124'},
+                        {brand: 'Google Chrome', version: '124'},
+                    ], mobile: false })
+                });
+            """)
+
             page = await browser_context.new_page()
             session["browser_context"] = browser_context
             session["page"] = page
@@ -917,6 +970,16 @@ async def _run_scan_session_serial(session_id: str, platforms: list, note: str, 
 
             if session.get("cancelled"):
                 break
+
+            # 头条首页会弹出"添加到桌面"浮层，需先关闭以免遮挡登录弹窗
+            if platform == "toutiao":
+                try:
+                    close_btn = page.locator('.pwa-download-popup .close, [class*="pwa"] [class*="close"]').first
+                    if await close_btn.is_visible(timeout=2000):
+                        await close_btn.click()
+                        await asyncio.sleep(0.5)
+                except Exception:
+                    pass
 
             # 自动点击登录按钮（非抖音平台需要手动触发登录弹窗）
             if pcfg["login_selectors"] and scan_mode == "force_new":
