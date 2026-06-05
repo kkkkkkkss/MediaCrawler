@@ -96,6 +96,16 @@ class BaseReport:
             await page.goto(url, wait_until="domcontentloaded", timeout=timeout_sec * 1000)
             await asyncio.sleep(3)
 
+            # 页面加载后立即检测是否为失效/已删除作品，避免浪费时间尝试举报
+            # 传入原始URL用于跳转检测（快手无效链接会跳转到其他视频）
+            invalid_reason = await self._check_page_invalid(page, url)
+            if invalid_reason:
+                result.error_msg = f"作品已失效/不存在（{invalid_reason}），无法投诉"
+                utils.logger.warning(
+                    f"[Report-{self.platform}] 链接失效: cookie={cookie_id} url={url} reason={invalid_reason}"
+                )
+                return result
+
             # 重试循环：首次执行 + retry_count 次重试
             last_error = None
             for attempt in range(retry_count + 1):
@@ -164,6 +174,87 @@ class BaseReport:
         提交后调用 self._take_screenshot(page, ctx, "post")。
         """
         raise NotImplementedError
+
+    async def _check_page_invalid(self, page: Page, original_url: str = "") -> str:
+        """
+        检测页面是否为失效/已删除作品。
+        返回空字符串表示页面正常，返回非空字符串表示失效原因。
+        子类可覆写以适配各自平台的失效页面特征。
+        """
+        import re
+
+        current_url = page.url
+
+        # 检测1：URL跳转检测
+        # 快手无效链接会302跳转到其他有效视频或首页
+        if original_url:
+            # 短链（如 /f/xxx）会302跳转到真实URL，不能用ID包含检查
+            is_short_link = bool(re.search(r'/f/[a-zA-Z0-9_-]+', original_url))
+
+            if not is_short_link:
+                original_id = ""
+                id_patterns = [
+                    r'/short-video/([a-zA-Z0-9_-]+)',  # 快手
+                    r'/video/(\d+)',  # 抖音
+                    r'/detail/(\d+)',  # 微博
+                    r'/video/(BV\w+)',  # B站
+                    r'/i(\d+)',  # 头条
+                ]
+                for pat in id_patterns:
+                    m = re.search(pat, original_url)
+                    if m:
+                        original_id = m.group(1)
+                        break
+
+                if original_id:
+                    if original_id not in current_url:
+                        return f"链接已跳转（原ID:{original_id}不在当前URL中）"
+
+        # 检测2：常见的跳转目标页面（说明原链接无效被重定向了）
+        redirect_indicators = [
+            '/discover',  # 快手/抖音跳转到发现页
+            'kuaishou.com/new-reco',  # 快手推荐页
+            'kuaishou.com/?isHome',  # 快手首页
+        ]
+        for indicator in redirect_indicators:
+            if indicator in current_url:
+                return f"链接已跳转至{current_url}（原链接无效）"
+
+        # 检测3：通用失效关键词检测（覆盖大多数平台的删除/下架提示）
+        invalid_msg = await page.evaluate('''() => {
+            let body = document.body ? document.body.innerText : '';
+
+            // 快手特殊处理1：无效视频页面返回 JSON {"result":2} 而非正常HTML（headless模式）
+            if (body.trim().startsWith('{') && body.includes('"result":2')) {
+                return '快手接口返回result:2（作品不存在）';
+            }
+            try {
+                let json = JSON.parse(body.trim());
+                if (json && json.result && json.result !== 1 && json.result !== 0) {
+                    return '快手接口返回错误码result:' + json.result;
+                }
+            } catch(e) {}
+
+            // 快手特殊处理2：无效视频显示倒计时"Ns后，播放其他精彩视频"
+            if (/\\d+s后.*播放其他/.test(body)) {
+                return '快手视频已失效（显示倒计时跳转）';
+            }
+
+            let keywords = [
+                '作品不存在', '视频不存在', '内容已删除', '页面不存在',
+                '视频不见了', '该作品已被删除', '该内容已被删除',
+                '该视频已删除', '作品已失效', '内容不存在',
+                '抱歉，页面无法访问', '该页面不存在',
+                '作品审核中', '内容违规', '已被下架',
+                '该作品可能涉嫌违规', '播放量/评论等信息不可见',
+                '该内容暂时无法查看', '内容已下线'
+            ];
+            for (let kw of keywords) {
+                if (body.includes(kw)) return kw;
+            }
+            return '';
+        }''')
+        return invalid_msg or ""
 
     def _collect_screenshot_paths(self, result: ReportResult, ctx: ReportContext):
         """从截图目录中收集 pre/post 路径写回 result"""

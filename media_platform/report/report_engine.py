@@ -85,22 +85,45 @@ async def run_report_task(
 
             task_info.add_log(f"[{plat_name}] 举报链接: {url} (将使用 {len(cookies)} 个账号)")
 
-            # 同一链接的多个 Cookie 并发举报
-            cookie_tasks = []
-            for cid, cstr in cookies:
-                cookie_tasks.append(_single_report_with_semaphore(
-                    semaphore, handler, url, cstr, cid,
-                    reason_text, description, task_id, task_info, plat_name,
-                ))
-            results = await asyncio.gather(*cookie_tasks, return_exceptions=True)
-            for r in results:
-                if isinstance(r, ReportResult):
-                    plat_results.append(r)
-                    await _save_record_to_db(r)
-                async with processed_lock:
-                    processed_counter["n"] += 1
-                    task_info.processed = processed_counter["n"]
-                    task_info.progress = round(processed_counter["n"] / max(total_ops, 1) * 100, 1)
+            # 先用第一个 Cookie 检测链接是否有效（避免失效链接浪费所有Cookie的时间）
+            first_cid, first_cstr = cookies[0]
+            first_result = await _single_report_with_semaphore(
+                semaphore, handler, url, first_cstr, first_cid,
+                reason_text, description, task_id, task_info, plat_name,
+            )
+            if isinstance(first_result, ReportResult):
+                plat_results.append(first_result)
+                await _save_record_to_db(first_result)
+                # 检测到链接失效时跳过剩余Cookie，节省时间
+                if not first_result.success and "已失效" in first_result.error_msg:
+                    task_info.add_log(f"  [{plat_name}] 链接失效，跳过剩余 {len(cookies)-1} 个账号")
+                    async with processed_lock:
+                        processed_counter["n"] += len(cookies)
+                        task_info.processed = processed_counter["n"]
+                        task_info.progress = round(processed_counter["n"] / max(total_ops, 1) * 100, 1)
+                    continue
+            async with processed_lock:
+                processed_counter["n"] += 1
+                task_info.processed = processed_counter["n"]
+                task_info.progress = round(processed_counter["n"] / max(total_ops, 1) * 100, 1)
+
+            # 链接有效，继续用剩余 Cookie 并发举报
+            if len(cookies) > 1:
+                cookie_tasks = []
+                for cid, cstr in cookies[1:]:
+                    cookie_tasks.append(_single_report_with_semaphore(
+                        semaphore, handler, url, cstr, cid,
+                        reason_text, description, task_id, task_info, plat_name,
+                    ))
+                results = await asyncio.gather(*cookie_tasks, return_exceptions=True)
+                for r in results:
+                    if isinstance(r, ReportResult):
+                        plat_results.append(r)
+                        await _save_record_to_db(r)
+                    async with processed_lock:
+                        processed_counter["n"] += 1
+                        task_info.processed = processed_counter["n"]
+                        task_info.progress = round(processed_counter["n"] / max(total_ops, 1) * 100, 1)
 
         return plat_results
 
@@ -152,7 +175,7 @@ async def _execute_single_report(
     reason_text: str, description: str, task_id: str,
     task_info, plat_name: str,
 ) -> ReportResult:
-    """执行单次举报并记录日志"""
+    """执行单次举报并记录日志，Cookie失效时自动标记"""
     task_info.add_log(f"  [{plat_name}] 账号 {cookie_id} 开始举报...")
 
     result = await handler.execute(
@@ -168,6 +191,16 @@ async def _execute_single_report(
         task_info.add_log(
             f"  [{plat_name}] 账号 {cookie_id} 举报失败: {result.error_msg} ({result.elapsed_sec}s)"
         )
+        # Cookie过期/无效时自动标记失效，避免后续任务继续使用已失效Cookie
+        _cookie_fatal_keywords = ["Cookie已过期", "Cookie无效", "需要重新扫码", "登录后举报", "登录即可"]
+        if any(kw in result.error_msg for kw in _cookie_fatal_keywords):
+            from proxy.cookie_pool import cookie_pool, FailureLevel
+            platform = result.platform
+            entry = cookie_pool._find_entry(platform, cookie_id)
+            if entry:
+                cookie_pool._last_used_id[platform] = cookie_id
+                cookie_pool.report_failure(platform, FailureLevel.FATAL)
+                task_info.add_log(f"  [{plat_name}] 账号 {cookie_id} 已标记为失效")
 
     return result
 

@@ -69,7 +69,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue'
-import { healthCheck } from './api'
+import { healthCheck, reloadCookies } from './api'
 
 const isCollapse = ref(false)
 const apiOnline = ref(false)
@@ -146,6 +146,8 @@ function manualHealthCheck() {
 
 onMounted(() => {
   doHealthCheck()
+  // 每次页面加载/F5刷新时自动reload cookie池，确保使用最新数据
+  reloadCookies().catch(() => {})
 })
 
 onUnmounted(() => {

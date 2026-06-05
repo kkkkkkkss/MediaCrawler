@@ -70,9 +70,19 @@ export const removeCookie = (data) => http.post('/cookies/remove', data)
 
 export const reloadCookies = () => http.post('/cookies/reload')
 
+export const validateCookies = (platform = '') =>
+  http.post('/cookies/validate', null, { params: platform ? { platform } : {} })
+
+export const refreshCookies = (platform = '') =>
+  http.post('/cookies/refresh', null, { params: platform ? { platform } : {} })
+
 /* ═══════════ 扫码登录 ═══════════ */
-export const startScan = (platform = 'all', note = '', scanMode = 'force_new') =>
-  http.post(`/cookies/scan/start?platform=${platform}&note=${encodeURIComponent(note)}&scan_mode=${scanMode}`)
+export const startScan = (platform = 'all', note = '', scanMode = 'force_new', platforms = '', execMode = 'serial') => {
+  let url = `/cookies/scan/start?platform=${platform}&note=${encodeURIComponent(note)}&scan_mode=${scanMode}`
+  if (platforms) url += `&platforms=${encodeURIComponent(platforms)}`
+  if (execMode) url += `&scan_execution=${execMode}`
+  return http.post(url)
+}
 
 export const getScanQrcode = (sessionId) =>
   http.get(`/cookies/scan/qrcode/${sessionId}`)
@@ -82,6 +92,18 @@ export const getScanStatus = (sessionId) =>
 
 export const cancelScan = (sessionId) =>
   http.post(`/cookies/scan/cancel/${sessionId}`)
+
+export const skipScanPlatform = (sessionId) =>
+  http.post(`/cookies/scan/skip/${sessionId}`)
+
+export const refreshScanQr = (sessionId) =>
+  http.post(`/cookies/scan/refresh/${sessionId}`)
+
+export const sendVerifyCode = (sessionId) =>
+  http.post(`/cookies/scan/verify/send/${sessionId}`)
+
+export const submitVerifyCode = (sessionId, code) =>
+  http.post(`/cookies/scan/verify/submit/${sessionId}`, { code })
 
 /* ═══════════ 批量操作 ═══════════ */
 export const batchRemoveCookies = (items) =>

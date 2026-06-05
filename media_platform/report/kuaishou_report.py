@@ -89,99 +89,86 @@ class KuaishouReport(BaseReport):
         # 等待弹窗内容异步渲染完成（快手 Vue 组件渲染 radio 文字有延迟）
         await asyncio.sleep(2)
 
-        # Step 5: 选择理由 —— 用 innerText（比 textContent 更准确）+ 多重匹配策略
+        # Step 5: 选择理由 —— 使用 Playwright 原生 click 点击 radio
+        # 快手举报弹窗的 DOM 结构：
+        #   .report-item-list-item
+        #     label.pl-radio (包含空 span + hidden input)
+        #     div.report-item-text "理由文字"
+        # 文本在 .report-item-text 中，radio 在同级的 label.pl-radio 中
+        # 点击目标：整个 .report-item-list-item 或其中的 label.pl-radio
         all_options = await page.evaluate('''() => {
             let dialog = document.querySelector('.modal-dialog');
             if (!dialog) return [];
-            // 策略1: .pl-radio 的 innerText
-            let radios = dialog.querySelectorAll('.pl-radio');
-            let texts = Array.from(radios).map(r => r.innerText.trim()).filter(t => t.length > 0);
-            if (texts.length > 0) return texts;
-            // 策略2: .report-item-list 内所有含文字的 label/span
-            let list = dialog.querySelector('.report-item-list');
-            if (list) {
-                let items = list.querySelectorAll('label, span, .pl-radio__label');
-                texts = Array.from(items).map(i => i.innerText.trim()).filter(t => t.length > 0);
+            let items = dialog.querySelectorAll('.report-item-list-item');
+            let results = [];
+            for (let item of items) {
+                let textEl = item.querySelector('.report-item-text');
+                let text = textEl ? textEl.textContent.trim() : item.textContent.trim();
+                if (text) results.push(text);
             }
-            return texts;
+            return results;
         }''')
         utils.logger.info(f"[Report-ks] 可选理由列表: {all_options}")
 
-        # 多策略理由选择：innerText + textContent + 子元素匹配
-        reason_clicked = await page.evaluate('''(reasonText) => {
+        # 找到匹配理由在 .report-item-list-item 中的索引
+        match_index = await page.evaluate('''(reasonText) => {
+            function normalize(s) {
+                return s.replace(/[\\s\\u3000\\u3001\\u3002\\uff0c\\uff0e\\u00b7\\-_\\/\\\\、，。]/g, '');
+            }
             let dialog = document.querySelector('.modal-dialog');
-            if (!dialog) return '';
-            // 策略1: .pl-radio innerText 匹配
-            let radios = dialog.querySelectorAll('.pl-radio');
-            for (let lbl of radios) {
-                let text = lbl.innerText.trim();
-                if (text && (text === reasonText || text.includes(reasonText))) {
-                    let radio = lbl.querySelector('input[type="radio"]');
-                    if (radio) { radio.click(); return text; }
-                    lbl.click();
-                    return text;
-                }
+            if (!dialog) return -1;
+            let items = dialog.querySelectorAll('.report-item-list-item');
+            let normReason = normalize(reasonText);
+
+            for (let i = 0; i < items.length; i++) {
+                let textEl = items[i].querySelector('.report-item-text');
+                let text = textEl ? textEl.textContent.trim() : items[i].textContent.trim();
+                if (!text) continue;
+
+                let normText = normalize(text);
+                let matched = (text === reasonText)
+                    || text.includes(reasonText)
+                    || reasonText.includes(text)
+                    || (normText === normReason)
+                    || normText.includes(normReason)
+                    || normReason.includes(normText);
+
+                if (matched) return i;
             }
-            // 策略2: 所有 label/span 文字匹配后点击最近的 radio
-            let allItems = dialog.querySelectorAll('label, span, div');
-            for (let item of allItems) {
-                let text = item.innerText.trim();
-                if (text === reasonText) {
-                    let parent = item.closest('.pl-radio') || item.parentElement;
-                    if (parent) {
-                        let radio = parent.querySelector('input[type="radio"]');
-                        if (radio) { radio.click(); return text; }
-                        parent.click();
-                        return text;
-                    }
-                    item.click();
-                    return text;
-                }
-            }
-            return '';
+            return -1;
         }''', reason_text)
 
-        if reason_clicked:
-            utils.logger.info(f"[Report-ks] 选择理由成功: {reason_clicked}")
+        reason_clicked = ""
+        if match_index >= 0:
+            # 点击匹配项内的 label.pl-radio（label 包裹了 input，点击 label 触发 radio）
+            label_locator = page.locator('.modal-dialog .report-item-list-item').nth(match_index).locator('label.pl-radio')
+            await label_locator.click()
+            reason_clicked = all_options[match_index] if match_index < len(all_options) else f"index={match_index}"
+            utils.logger.info(f"[Report-ks] Playwright原生click选择理由成功: {reason_clicked}")
         else:
-            # 兜底1: 显式匹配"不实信息"
-            reason_clicked = await page.evaluate('''() => {
-                let dialog = document.querySelector('.modal-dialog');
-                if (!dialog) return '';
-                let items = dialog.querySelectorAll('.pl-radio, label, span');
-                for (let item of items) {
-                    let text = item.innerText.trim();
-                    if (text.includes('\u4e0d\u5b9e\u4fe1\u606f')) {
-                        let radio = item.querySelector('input[type="radio"]') ||
-                                    (item.closest('.pl-radio') || item.parentElement || {}).querySelector &&
-                                    (item.closest('.pl-radio') || item.parentElement).querySelector('input[type="radio"]');
-                        if (radio) { radio.click(); return text; }
-                        item.click();
-                        return text;
-                    }
+            # 兜底：匹配"不实信息"
+            fallback_index = await page.evaluate('''() => {
+                function normalize(s) {
+                    return s.replace(/[\\s\\u3000\\u3001\\u3002\\uff0c\\uff0e\\u00b7\\-_\\/\\\\、，。]/g, '');
                 }
-                return '';
+                let dialog = document.querySelector('.modal-dialog');
+                if (!dialog) return -1;
+                let items = dialog.querySelectorAll('.report-item-list-item');
+                for (let i = 0; i < items.length; i++) {
+                    let textEl = items[i].querySelector('.report-item-text');
+                    let text = textEl ? textEl.textContent.trim() : items[i].textContent.trim();
+                    let norm = normalize(text);
+                    if (norm.includes('不实信息')) return i;
+                }
+                return -1;
             }''')
-            if reason_clicked:
-                utils.logger.warning(f"[Report-ks] 兜底匹配'不实信息': {reason_clicked}")
+            if fallback_index >= 0:
+                label_locator = page.locator('.modal-dialog .report-item-list-item').nth(fallback_index).locator('label.pl-radio')
+                await label_locator.click()
+                reason_clicked = all_options[fallback_index] if fallback_index < len(all_options) else "不实信息"
+                utils.logger.warning(f"[Report-ks] 兜底Playwright click匹配'不实信息': {reason_clicked}")
             else:
-                # 兜底2: 选第一个可用 radio
-                reason_clicked = await page.evaluate('''() => {
-                    let dialog = document.querySelector('.modal-dialog');
-                    if (!dialog) return '';
-                    let radios = dialog.querySelectorAll('.pl-radio');
-                    if (radios.length > 0) {
-                        let radio = radios[0].querySelector('input[type="radio"]');
-                        if (radio) { radio.click(); return radios[0].innerText.trim() || '(first)'; }
-                        radios[0].click();
-                        return radios[0].innerText.trim() || '(first)';
-                    }
-                    return '';
-                }''')
-                if reason_clicked:
-                    utils.logger.warning(f"[Report-ks] 最终兜底选了第一个: {reason_clicked}")
-                else:
-                    utils.logger.warning("[Report-ks] 未能选择任何理由")
+                utils.logger.warning(f"[Report-ks] 所有策略均未匹配到理由'{reason_text}'，可选列表: {all_options}")
 
         await asyncio.sleep(0.5)
 
@@ -201,20 +188,35 @@ class KuaishouReport(BaseReport):
         utils.logger.info("[Report-ks] 提交前截图完成")
 
         # Step 8: 提交
+        # 快手提交按钮可能是 button/a/div，class 可能含 report-submit/btn 等
         submitted = False
         try:
-            btn = page.locator('.modal-body button:has-text("提交")').first
+            # 策略1：Playwright locator 文本匹配（最可靠）
+            btn = page.locator('.modal-dialog :text("提交")').first
             if await btn.is_visible(timeout=3000):
                 await btn.click()
                 submitted = True
         except Exception:
             pass
         if not submitted:
+            try:
+                # 策略2：查找 modal-dialog 内所有含"提交"文字的可点击元素
+                btn = page.locator('.modal-dialog button, .modal-dialog a, .modal-dialog [class*="submit"], .modal-dialog [class*="btn"]').filter(has_text="提交").first
+                if await btn.is_visible(timeout=2000):
+                    await btn.click()
+                    submitted = True
+            except Exception:
+                pass
+        if not submitted:
+            # 策略3：JS evaluate 兜底
             submitted = await page.evaluate('''() => {
-                let btns = document.querySelectorAll('.modal-body button, .modal-dialog button');
-                for (let b of btns) {
-                    if (b.textContent.includes('提交') && !b.disabled) {
-                        b.click();
+                let dialog = document.querySelector('.modal-dialog');
+                if (!dialog) return false;
+                let allEls = dialog.querySelectorAll('button, a, div, span');
+                for (let el of allEls) {
+                    let text = (el.textContent || '').trim();
+                    if (text === '提交' && el.offsetHeight > 0) {
+                        el.click();
                         return true;
                     }
                 }

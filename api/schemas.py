@@ -270,7 +270,15 @@ class CookieEntry(BaseModel):
     cookie: str = Field(..., description="Cookie字符串内容")
     note: str = Field(default="", description="备注")
     valid: bool = Field(default=True, description="是否有效（false表示已被标记失效）")
+    cookie_type: str = Field(default="account", description="Cookie类型: account/public_session/virtual")
+    account_valid: bool = Field(default=True, description="是否具备账号登录态能力")
+    public_detail_valid: bool = Field(default=True, description="是否可用于公开详情/互动量检测")
+    public_comment_valid: bool = Field(default=False, description="是否可用于评论抓取")
     fatal_count: int = Field(default=0, description="致命失败累计次数（达到阈值自动标记失效）")
+    use_count: int = Field(default=0, description="累计使用次数")
+    last_used_at: Optional[str] = Field(default=None, description="最后使用时间")
+    last_validated_at: Optional[str] = Field(default=None, description="最后验证时间")
+    last_refreshed_at: Optional[str] = Field(default=None, description="最后刷新时间")
 
 
 class CookiePoolResponse(BaseModel):

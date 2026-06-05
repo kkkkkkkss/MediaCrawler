@@ -260,13 +260,14 @@ class UrlCheckCrawler(AbstractCrawler):
         on_result=None,
     ):
         """单浏览器处理模式（复用 _browser_worker，确保与并发模式行为一致）"""
-        cookie_free = platform in getattr(config, "COOKIE_FREE_PLATFORMS", [])
+        cookie_free = self._is_urlcheck_cookie_free(platform)
+        cookie_purpose = self._get_urlcheck_cookie_purpose(platform)
 
         # 获取Cookie
         cookie_info: Optional[tuple] = None
         if not cookie_free and getattr(config, "ENABLE_COOKIE_POOL", False):
             from proxy.cookie_pool import cookie_pool
-            allocated = cookie_pool.allocate_cookies(platform, 1)
+            allocated = cookie_pool.allocate_cookies(platform, 1, purpose=cookie_purpose)
             if allocated:
                 cookie_info = allocated[0]
 
@@ -276,11 +277,17 @@ class UrlCheckCrawler(AbstractCrawler):
         for row in need_browser_rows:
             await url_queue.put(row)
 
-        results = await self._browser_worker(
+        result = await self._browser_worker(
             platform, mode, url_queue, cookie_info, 1, used_cookie_ids,
             on_result=on_result,
         )
-        self._all_results.extend(results)
+        if isinstance(result, tuple) and len(result) == 2:
+            results_list, _exhausted_cookie_id = result
+        else:
+            results_list = result
+
+        if isinstance(results_list, list):
+            self._all_results.extend(results_list)
 
     async def _process_platform_concurrent(
         self, platform: str, need_browser_rows: List[Dict], mode: str, concurrency: int,
@@ -290,7 +297,8 @@ class UrlCheckCrawler(AbstractCrawler):
         多浏览器并发处理模式。
         创建共享队列，为每个浏览器分配独立Cookie，通过 asyncio.gather 并行处理。
         """
-        cookie_free = platform in getattr(config, "COOKIE_FREE_PLATFORMS", [])
+        cookie_free = self._is_urlcheck_cookie_free(platform)
+        cookie_purpose = self._get_urlcheck_cookie_purpose(platform)
 
         utils.logger.info(
             f"[UrlCheckCrawler] 平台 [{platform}] 启用多浏览器并发: "
@@ -305,7 +313,9 @@ class UrlCheckCrawler(AbstractCrawler):
             cookie_list = [None] * concurrency
         else:
             from proxy.cookie_pool import cookie_pool
-            allocated = cookie_pool.allocate_cookies(platform, concurrency)
+            allocated = cookie_pool.allocate_cookies(
+                platform, concurrency, purpose=cookie_purpose
+            )
             cookie_list = allocated
             used_cookie_ids = {c[0] for c in allocated}
             # 实际并发受限于分配到的Cookie数
@@ -336,30 +346,103 @@ class UrlCheckCrawler(AbstractCrawler):
 
         all_worker_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # 合并结果到主实例
+        # strict 模式收集已跑满的 Cookie，重分配时排除
+        exhausted_cookie_ids: set = set()
+
         for result in all_worker_results:
             if isinstance(result, Exception):
                 utils.logger.error(
                     f"[UrlCheckCrawler] 平台 [{platform}] Worker 异常: {result}"
                 )
                 continue
-            if isinstance(result, list):
+            # Worker 返回 (results_list, exhausted_cookie_id)
+            if isinstance(result, tuple) and len(result) == 2:
+                results_list, ex_id = result
+                if isinstance(results_list, list):
+                    self._all_results.extend(results_list)
+                if ex_id:
+                    exhausted_cookie_ids.add(ex_id)
+            elif isinstance(result, list):
                 self._all_results.extend(result)
 
-        # 队列中可能还有未处理的URL（所有Worker都因Cookie失效停止的情况）
-        remaining = []
-        while not url_queue.empty():
-            try:
-                remaining.append(url_queue.get_nowait())
-            except asyncio.QueueEmpty:
+        max_rounds = getattr(config, "MAX_REDISTRIBUTE_ROUNDS", 3)
+        redistribute_round = 0
+
+        while not url_queue.empty() and not cookie_free:
+            redistribute_round += 1
+            remaining_count = url_queue.qsize()
+
+            if redistribute_round > max_rounds:
+                # 超过最大轮次，标记剩余为无效
+                remaining = []
+                while not url_queue.empty():
+                    try:
+                        remaining.append(url_queue.get_nowait())
+                    except asyncio.QueueEmpty:
+                        break
+                utils.logger.warning(
+                    f"[UrlCheckCrawler] 平台 [{platform}] 重试{max_rounds}轮后仍剩余"
+                    f" {len(remaining)} 条URL，标记为无效"
+                )
+                for row in remaining:
+                    row["_fetch_fail_reason"] = "max_rounds_exhausted"
+                    # 业务约定: 0/NULL=未检测(会被重新捞)，1=有效，2=无效
+                    await self._save_result(row, is_valid=2)
                 break
-        if remaining:
-            utils.logger.warning(
-                f"[UrlCheckCrawler] 平台 [{platform}] 剩余 {len(remaining)} 条URL未处理"
-                f"（所有Cookie失效），标记为有效（无法确认状态）"
+
+            utils.logger.info(
+                f"[UrlCheckCrawler] 平台 [{platform}] 第{redistribute_round}轮重分配："
+                f"剩余 {remaining_count} 条URL，重新分配Cookie"
             )
-            for row in remaining:
-                await self._save_result(row, is_valid=1)
+
+            # 重新从Cookie池获取可用Cookie（排除已跑满的）
+            from proxy.cookie_pool import cookie_pool
+            new_allocated = cookie_pool.allocate_cookies(
+                platform, concurrency, exclude_ids=exhausted_cookie_ids,
+                purpose=cookie_purpose,
+            )
+            if not new_allocated:
+                remaining = []
+                while not url_queue.empty():
+                    try:
+                        remaining.append(url_queue.get_nowait())
+                    except asyncio.QueueEmpty:
+                        break
+                utils.logger.warning(
+                    f"[UrlCheckCrawler] 平台 [{platform}] 无可用Cookie，"
+                    f"剩余 {len(remaining)} 条标记为无效"
+                )
+                for row in remaining:
+                    row["_fetch_fail_reason"] = "no_cookie_available"
+                    await self._save_result(row, is_valid=2)
+                break
+
+            new_used = {c[0] for c in new_allocated}
+            retry_tasks = []
+            for i, ci in enumerate(new_allocated):
+                retry_tasks.append(
+                    self._browser_worker(
+                        platform, mode, url_queue,
+                        ci, i + 1, new_used,
+                        on_result=on_result,
+                    )
+                )
+
+            retry_results = await asyncio.gather(*retry_tasks, return_exceptions=True)
+            for result in retry_results:
+                if isinstance(result, Exception):
+                    utils.logger.error(
+                        f"[UrlCheckCrawler] 平台 [{platform}] 重分配Worker异常: {result}"
+                    )
+                    continue
+                if isinstance(result, tuple) and len(result) == 2:
+                    results_list, ex_id = result
+                    if isinstance(results_list, list):
+                        self._all_results.extend(results_list)
+                    if ex_id:
+                        exhausted_cookie_ids.add(ex_id)
+                elif isinstance(result, list):
+                    self._all_results.extend(result)
 
     async def _save_result(self, row: Dict, is_valid: int, metrics: Optional[Dict] = None):
         """统一的结果保存：文件模式写内存，DB模式写外部库"""
@@ -403,8 +486,10 @@ class UrlCheckCrawler(AbstractCrawler):
             f"content_id={content_id} url={url}"
         )
 
+        cookie_free = self._is_urlcheck_cookie_free(platform)
+        cookie_purpose = self._get_urlcheck_cookie_purpose(platform)
         # 最多尝试次数（首次 + 切换重试）
-        max_attempts = 2 if getattr(config, "ENABLE_COOKIE_POOL", False) else 1
+        max_attempts = 2 if getattr(config, "ENABLE_COOKIE_POOL", False) and not cookie_free else 1
 
         for attempt in range(max_attempts):
             try:
@@ -483,11 +568,16 @@ class UrlCheckCrawler(AbstractCrawler):
 
                 # 网络超时 → 不计入 Cookie 失败，但可以切换试试
                 if fail_reason == self._FETCH_FAIL_NETWORK:
-                    if getattr(config, "ENABLE_COOKIE_POOL", False) and attempt < max_attempts - 1:
+                    if (
+                        getattr(config, "ENABLE_COOKIE_POOL", False)
+                        and not cookie_free
+                        and attempt < max_attempts - 1
+                    ):
                         from proxy.cookie_pool import cookie_pool
                         current_cookie_id = cookie_pool.get_current_id(platform)
                         new_cookie = cookie_pool.get_another_cookie(
-                            platform, exclude_id=current_cookie_id
+                            platform, exclude_id=current_cookie_id,
+                            purpose=cookie_purpose,
                         )
                         if new_cookie and hasattr(client, "headers"):
                             client.headers["Cookie"] = new_cookie
@@ -499,7 +589,7 @@ class UrlCheckCrawler(AbstractCrawler):
                     break
 
                 # auth_failed → Cookie/IP 风控，计入 FATAL 失败 + 切换重试
-                if not getattr(config, "ENABLE_COOKIE_POOL", False):
+                if not getattr(config, "ENABLE_COOKIE_POOL", False) or cookie_free:
                     break
 
                 from proxy.cookie_pool import cookie_pool, FailureLevel
@@ -507,10 +597,13 @@ class UrlCheckCrawler(AbstractCrawler):
                 current_cookie_id = cookie_pool.get_current_id(platform)
 
                 if attempt < max_attempts - 1:
-                    has_more = cookie_pool.report_failure(platform, FailureLevel.FATAL)
+                    has_more = cookie_pool.report_failure(
+                        platform, FailureLevel.FATAL, purpose=cookie_purpose
+                    )
                     if has_more:
                         new_cookie = cookie_pool.get_another_cookie(
-                            platform, exclude_id=current_cookie_id
+                            platform, exclude_id=current_cookie_id,
+                            purpose=cookie_purpose,
                         )
                         if new_cookie and hasattr(client, "headers"):
                             client.headers["Cookie"] = new_cookie
@@ -527,18 +620,25 @@ class UrlCheckCrawler(AbstractCrawler):
                     )
                     break
                 else:
-                    cookie_pool.report_failure(platform, FailureLevel.FATAL)
+                    cookie_pool.report_failure(
+                        platform, FailureLevel.FATAL, purpose=cookie_purpose
+                    )
                     break
 
             except asyncio.TimeoutError:
                 utils.logger.warning(
                     f"[UrlCheckCrawler] id={row_id} 请求超时(attempt={attempt+1})"
                 )
-                if getattr(config, "ENABLE_COOKIE_POOL", False) and attempt < max_attempts - 1:
+                if (
+                    getattr(config, "ENABLE_COOKIE_POOL", False)
+                    and not cookie_free
+                    and attempt < max_attempts - 1
+                ):
                     from proxy.cookie_pool import cookie_pool
                     current_cookie_id = cookie_pool.get_current_id(platform)
                     new_cookie = cookie_pool.get_another_cookie(
-                        platform, exclude_id=current_cookie_id
+                        platform, exclude_id=current_cookie_id,
+                        purpose=cookie_purpose,
                     )
                     if new_cookie and hasattr(client, "headers"):
                         client.headers["Cookie"] = new_cookie
@@ -1133,27 +1233,47 @@ class UrlCheckCrawler(AbstractCrawler):
     def _resolve_concurrency(self, platform: str, url_count: int) -> int:
         """
         计算指定平台的实际浏览器并发数。
-        - cookie_free 平台：直接按 PLATFORM_CONCURRENCY 配置值（不受Cookie限制）
-        - 其他平台：min(配置值, 可用Cookie数, URL数量)
+        - 链接检测免 Cookie 平台：直接按 PLATFORM_CONCURRENCY 配置值（不受账号数量限制）
+        - 其他平台：按账号/公开详情用途统计可用 Cookie，再限制并发
         """
         platform_concurrency = getattr(config, "PLATFORM_CONCURRENCY", {})
         configured = platform_concurrency.get(platform, 1)
 
-        cookie_free = getattr(config, "COOKIE_FREE_PLATFORMS", [])
-        if platform in cookie_free:
+        if self._is_urlcheck_cookie_free(platform):
             # 无Cookie限制，但不需要超过URL数量
             actual = min(configured, url_count)
         else:
             # 受Cookie数量限制
             if getattr(config, "ENABLE_COOKIE_POOL", False):
                 from proxy.cookie_pool import cookie_pool
-                available = cookie_pool.get_valid_count(platform)
+                purpose = self._get_urlcheck_cookie_purpose(platform)
+                available = cookie_pool.get_available_count(platform, purpose)
             else:
                 available = 1
             actual = min(configured, available, url_count)
 
         # 至少为1
         return max(actual, 1)
+
+    def _is_urlcheck_cookie_free(self, platform: str) -> bool:
+        """链接检测专用免 Cookie 判断；不影响投诉举报等账号态流程。"""
+        detail_free = getattr(config, "URLCHECK_DETAIL_COOKIE_FREE_PLATFORMS", None)
+        if detail_free is None:
+            detail_free = getattr(config, "COOKIE_FREE_PLATFORMS", [])
+        return platform in detail_free
+
+    def _get_urlcheck_cookie_purpose(self, platform: str) -> str:
+        """链接检测按平台选择 Cookie 能力，快手/微博可使用公开详情 session。"""
+        policy = getattr(config, "URLCHECK_DETAIL_COOKIE_PURPOSE", {})
+        if platform in self._is_urlcheck_cookie_free_platforms():
+            return "none"
+        return policy.get(platform, "account")
+
+    def _is_urlcheck_cookie_free_platforms(self) -> set:
+        detail_free = getattr(config, "URLCHECK_DETAIL_COOKIE_FREE_PLATFORMS", None)
+        if detail_free is None:
+            detail_free = getattr(config, "COOKIE_FREE_PLATFORMS", [])
+        return set(detail_free)
 
     async def _browser_worker(
         self,
@@ -1177,13 +1297,21 @@ class UrlCheckCrawler(AbstractCrawler):
             worker_id: Worker 编号（用于日志标识）
             used_cookie_ids: 所有 Worker 已占用的 Cookie ID 集合（共享引用，用于避免重复分配）
         """
-        max_per_cookie = getattr(config, "MAX_URLS_PER_COOKIE", 0)
+        # 按平台读取单Cookie最大处理数（兼容旧的全局int配置）
+        max_urls_cfg = getattr(config, "MAX_URLS_PER_COOKIE", 0)
+        if isinstance(max_urls_cfg, dict):
+            max_per_cookie = max_urls_cfg.get(platform, 0)
+        else:
+            max_per_cookie = max_urls_cfg
         base_sleep = getattr(config, "PLATFORM_SLEEP_SEC", {}).get(
             platform, config.CRAWLER_MAX_SLEEP_SEC
         )
         jitter_ratio = getattr(config, "SLEEP_JITTER_RATIO", 0.3)
-        cookie_free = platform in getattr(config, "COOKIE_FREE_PLATFORMS", [])
+        cookie_free = self._is_urlcheck_cookie_free(platform)
+        cookie_purpose = self._get_urlcheck_cookie_purpose(platform)
         worker_results: List[Dict] = []
+        # strict 模式下达到上限的 Cookie ID，供调度层排除
+        exhausted_cookie_id: Optional[str] = None
         processed_count = 0
         tag = f"[W{worker_id}-{platform}]"
 
@@ -1209,27 +1337,67 @@ class UrlCheckCrawler(AbstractCrawler):
                 )
                 if client is None:
                     utils.logger.error(f"{tag} 创建Client失败")
-                    return worker_results
+                    return worker_results, exhausted_cookie_id
 
                 utils.logger.info(
                     f"{tag} 启动成功"
                     f"{'' if cookie_free else f', Cookie={current_cookie_id}'}"
                 )
 
+                # cookie_batch_count 跟踪当前 Cookie 本轮已处理的URL数
+                # cookie_round 跟踪当前 Cookie 已复用的轮次
+                cookie_batch_count = 0
+                cookie_round = 1
+
+                limit_policy = getattr(config, "COOKIE_LIMIT_POLICY", "cooldown")
+                cooldown_sec = getattr(config, "COOKIE_COOLDOWN_SEC", 300)
+
                 while not queue.empty():
-                    # 软上限检查
-                    if max_per_cookie > 0 and processed_count >= max_per_cookie:
+                    # 达到单Cookie上限时：按策略处理
+                    if max_per_cookie > 0 and cookie_batch_count >= max_per_cookie:
+                        if cookie_free:
+                            break
                         utils.logger.info(
-                            f"{tag} 达到单Cookie上限({max_per_cookie}条)，停止取新URL"
+                            f"{tag} Cookie {current_cookie_id} 第{cookie_round}轮达到上限"
+                            f"({max_per_cookie}条)，策略={limit_policy}"
                         )
-                        break
+                        # 达到上限换号，不记FATAL（mark_failure=False）
+                        new_client = await self._try_rebind_cookie(
+                            crawler_instance, platform, playwright,
+                            current_cookie_id, used_cookie_ids, tag,
+                            mark_failure=False,
+                            purpose=cookie_purpose,
+                        )
+                        if new_client:
+                            client = new_client
+                            current_cookie_id = getattr(
+                                crawler_instance, "_rebound_cookie_id", current_cookie_id
+                            )
+                            cookie_batch_count = 0
+                            cookie_round = 1
+                            utils.logger.info(f"{tag} 已换到Cookie {current_cookie_id}，继续处理")
+                        elif limit_policy == "cooldown":
+                            # 冷却模式：休息后复用当前Cookie
+                            cookie_batch_count = 0
+                            cookie_round += 1
+                            utils.logger.info(
+                                f"{tag} 无备用Cookie，冷却 {cooldown_sec}s 后复用 "
+                                f"{current_cookie_id} 开始第{cookie_round}轮"
+                            )
+                            await asyncio.sleep(cooldown_sec)
+                        else:
+                            # strict 模式：记录已跑满的 Cookie，供调度层排除
+                            exhausted_cookie_id = current_cookie_id
+                            utils.logger.info(
+                                f"{tag} strict模式，无备用Cookie，Worker停止"
+                            )
+                            break
 
                     try:
                         row = queue.get_nowait()
                     except asyncio.QueueEmpty:
                         break
 
-                    # 将 Worker/Cookie 信息注入 row，供日志回调使用
                     row["_worker_id"] = worker_id
                     row["_cookie_id"] = current_cookie_id
 
@@ -1238,31 +1406,39 @@ class UrlCheckCrawler(AbstractCrawler):
 
                     await crawler_instance._process_single_url(platform, client, row, mode)
                     processed_count += 1
+                    cookie_batch_count += 1
                     new_results = crawler_instance._all_results[len(worker_results):]
                     worker_results.extend(new_results)
 
-                    # 实时回调：每条URL处理完立即通知上层（用于前端日志）
                     if on_result:
                         for r in new_results:
                             on_result(r)
 
-                    # Cookie 失效检测：当 _fetch_fail_reason 为 auth_failed 时尝试换 Cookie
+                    # Cookie 失效检测
                     fail_reason = row.get("_fetch_fail_reason", "")
                     if fail_reason == UrlCheckCrawler._FETCH_FAIL_AUTH and not cookie_free:
                         new_client = await self._try_rebind_cookie(
                             crawler_instance, platform, playwright,
-                            current_cookie_id, used_cookie_ids, tag
+                            current_cookie_id, used_cookie_ids, tag,
+                            purpose=cookie_purpose,
                         )
                         if new_client:
                             client = new_client
                             current_cookie_id = getattr(
                                 crawler_instance, "_rebound_cookie_id", current_cookie_id
                             )
+                            cookie_batch_count = 0
                         else:
                             utils.logger.warning(f"{tag} Cookie失效且无备用Cookie，Worker停止")
                             break
 
-                    # 拟人化：请求间隔添加随机抖动，模拟不规律的浏览行为
+                    # Set-Cookie 回写
+                    if not cookie_free and current_cookie_id and hasattr(client, "get_updated_cookie_str"):
+                        new_str = client.get_updated_cookie_str()
+                        if new_str:
+                            from proxy.cookie_pool import cookie_pool
+                            cookie_pool.update_cookie_str(platform, current_cookie_id, new_str)
+
                     actual_sleep = base_sleep * (1 + random.uniform(-jitter_ratio, jitter_ratio))
                     await asyncio.sleep(actual_sleep)
 
@@ -1272,7 +1448,7 @@ class UrlCheckCrawler(AbstractCrawler):
                 await crawler_instance._cleanup_browser()
 
         utils.logger.info(f"{tag} 完成，处理了 {processed_count} 条URL")
-        return worker_results
+        return worker_results, exhausted_cookie_id
 
     async def _create_worker_client(
         self,
@@ -1393,19 +1569,27 @@ class UrlCheckCrawler(AbstractCrawler):
         current_cookie_id: Optional[str],
         used_cookie_ids: set,
         tag: str,
+        mark_failure: bool = True,
+        purpose: str = "account",
     ):
-        """Cookie 失效后尝试从池中取新 Cookie 重建 Client"""
+        """
+        尝试从池中取新 Cookie 重建 Client。
+        mark_failure=True 时记录致命失败（真实 auth 失效）；
+        mark_failure=False 时仅换号，不记失败（达到使用上限等正常场景）。
+        """
         if not getattr(config, "ENABLE_COOKIE_POOL", False):
             return None
 
         from proxy.cookie_pool import cookie_pool, FailureLevel
 
-        # 报告当前Cookie失败
-        if current_cookie_id:
-            cookie_pool.report_failure(platform, FailureLevel.FATAL)
+        # 只在真实失效时记录 FATAL，按 cookie_id 精确标记
+        if mark_failure and current_cookie_id:
+            cookie_pool.report_failure_by_id(
+                platform, current_cookie_id, FailureLevel.FATAL, purpose=purpose
+            )
 
         # 获取一个未被其他Worker占用的新Cookie
-        new_cookie = cookie_pool.get_unused_cookie(platform, used_cookie_ids)
+        new_cookie = cookie_pool.get_unused_cookie(platform, used_cookie_ids, purpose=purpose)
         if not new_cookie:
             return None
 

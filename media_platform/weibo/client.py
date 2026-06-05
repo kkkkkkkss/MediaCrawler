@@ -51,17 +51,28 @@ class WeiboClient(ProxyRefreshMixin):
         self.playwright_page = playwright_page
         self.cookie_dict = cookie_dict
         self._image_agent_host = "https://i1.wp.com/"
-        # Initialize proxy pool (from ProxyRefreshMixin)
+        self._cookie_updated = False
         self.init_proxy_pool(proxy_ip_pool)
+
+    def get_updated_cookie_str(self):
+        """返回更新后的cookie字符串（仅当有变化时）"""
+        if self._cookie_updated:
+            self._cookie_updated = False
+            return "; ".join(f"{k}={v}" for k, v in self.cookie_dict.items())
+        return None
 
     @retry(stop=stop_after_attempt(5), wait=wait_fixed(3))
     async def request(self, method, url, **kwargs) -> Union[Response, Dict]:
-        # Check if proxy is expired before each request
         await self._refresh_proxy_if_expired()
 
         enable_return_response = kwargs.pop("return_response", False)
         async with make_async_client(proxy=self.proxy) as client:
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
+
+        # Set-Cookie 回写
+        from tools.httpx_util import merge_response_cookies
+        if merge_response_cookies(response, self.cookie_dict, self.headers):
+            self._cookie_updated = True
 
         if enable_return_response:
             return response
@@ -69,21 +80,21 @@ class WeiboClient(ProxyRefreshMixin):
         try:
             data: Dict = response.json()
         except json.decoder.JSONDecodeError:
-            # issue: #771 Search API returns error 432, retry multiple times + update h5 cookies
             utils.logger.error(f"[WeiboClient.request] request {method}:{url} err code: {response.status_code} res:{response.text}")
-            await self.playwright_page.goto(self._host)
-            await asyncio.sleep(2)
-            await self.update_cookies(browser_context=self.playwright_page.context)
+            if self.playwright_page:
+                await self.playwright_page.goto(self._host)
+                await asyncio.sleep(2)
+                await self.update_cookies(browser_context=self.playwright_page.context)
             raise DataFetchError(f"get response code error: {response.status_code}")
 
         ok_code = data.get("ok")
-        if ok_code == 0:  # response error
+        if ok_code == 0:
             utils.logger.error(f"[WeiboClient.request] request {method}:{url} err, res:{data}")
             raise DataFetchError(data.get("msg", "response error"))
-        elif ok_code != 1:  # unknown error
+        elif ok_code != 1:
             utils.logger.error(f"[WeiboClient.request] request {method}:{url} err, res:{data}")
             raise DataFetchError(data.get("msg", "unknown error"))
-        else:  # response right
+        else:
             return data.get("data", {})
 
     async def get(self, uri: str, params=None, headers=None, **kwargs) -> Union[Response, Dict]:

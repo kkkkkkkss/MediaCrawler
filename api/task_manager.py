@@ -30,16 +30,21 @@ class TaskInfo:
         self.result_data: Optional[list] = None   # 原始结果列表（用于 JSON 返回）
         self.comments_data: Optional[list] = None  # 评论数据列表（按作品分组）
         self.callback_url: Optional[str] = None    # 任务级回调地址
+        self._running_task: Optional[asyncio.Task] = None  # 当前执行中的asyncio Task引用
 
     @property
     def is_cancelled(self) -> bool:
         return self._cancelled
 
     def cancel(self):
-        """标记任务为已取消"""
+        """标记任务为已取消，并真正中断正在执行的协程"""
         self._cancelled = True
         self.status = "cancelled"
         self.message = "任务已被用户终止"
+        # 真正取消正在运行的 asyncio Task
+        if self._running_task and not self._running_task.done():
+            self._running_task.cancel()
+            utils.logger.info(f"[TaskManager] 任务 {self.task_id} 的协程已被取消")
 
     def add_log(self, msg: str):
         """添加一条处理日志"""
@@ -128,7 +133,10 @@ class TaskManager:
                 info.status = "running"
                 info.message = "处理中..."
                 try:
-                    await coro_factory(info)
+                    # 将任务协程包装为 asyncio.Task，以便 cancel() 能真正中断执行
+                    task = asyncio.create_task(coro_factory(info))
+                    info._running_task = task
+                    await task
                     if info.status == "running":
                         info.status = "completed"
                         info.progress = 100.0
@@ -140,6 +148,12 @@ class TaskManager:
                             await trigger_task_callback(info)
                         except Exception as cb_err:
                             utils.logger.warning(f"[TaskManager] 回调失败: {cb_err}")
+                except asyncio.CancelledError:
+                    # 任务被 cancel() 真正取消
+                    if info.status != "cancelled":
+                        info.status = "cancelled"
+                        info.message = "任务已被用户终止"
+                    utils.logger.info(f"[TaskManager] 任务 {info.task_id} 已被取消")
                 except Exception as e:
                     info.status = "failed"
                     info.error = str(e)
@@ -149,6 +163,7 @@ class TaskManager:
                         f"{traceback.format_exc()}"
                     )
                 finally:
+                    info._running_task = None
                     self._queue.task_done()
             except asyncio.CancelledError:
                 break

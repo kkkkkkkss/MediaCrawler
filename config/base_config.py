@@ -178,11 +178,39 @@ PLATFORM_SLEEP_SEC = {
 # 单个Cookie/浏览器单批次最大处理URL数（软上限，防止单账号负载过高触发风控）
 # 达到上限后该浏览器停止取新URL，剩余URL由其他浏览器继续处理
 # 0 = 不限制（共享队列自然均分）
-MAX_URLS_PER_COOKIE = 0
+# 按平台区分：高风控平台(快手/抖音)限制50条，低风控平台不限制
+MAX_URLS_PER_COOKIE = {
+    "dy": 100,
+    "ks": 100,
+    "bili": 0,
+    "wb": 0,
+    "toutiao": 0,
+    "xhs": 50,
+}
+
+# 单Cookie达到上限后的处理策略
+# "cooldown" = 休息 COOKIE_COOLDOWN_SEC 秒后复用当前Cookie继续（适合Cookie少但任务多的场景）
+# "strict"   = 释放该Cookie，让调度层换账号；无可用账号则停止并标记剩余为无效（适合高风控场景）
+COOKIE_LIMIT_POLICY = "cooldown"
+
+# cooldown 模式下，单Cookie达到上限后的冷却时间（秒）
+COOKIE_COOLDOWN_SEC = 300  # 5分钟
+
+# Cookie耗尽后调度层最多重分配的轮次
+MAX_REDISTRIBUTE_ROUNDS = 3
 
 # 不需要Cookie即可访问的平台列表
 # 这些平台并发数不受Cookie数量限制，直接按 PLATFORM_CONCURRENCY 配置开浏览器
 COOKIE_FREE_PLATFORMS = ["toutiao"]
+
+# 链接检测详情/互动量专用策略：它和投诉举报分开，避免公开详情检测消耗账号池。
+# none = 不分配 Cookie；account = 必须账号可用；public_detail = 只要求公开详情能力可用。
+URLCHECK_DETAIL_COOKIE_FREE_PLATFORMS = ["bili", "toutiao"]
+URLCHECK_DETAIL_COOKIE_PURPOSE = {
+    "dy": "account",
+    "ks": "public_detail",
+    "wb": "public_detail",
+}
 
 # ==================== 拟人化反风控配置 ====================
 # 多浏览器启动间隔（秒）：每个 Worker 在 [0, 该值] 之间随机延迟后再启动浏览器
@@ -241,8 +269,20 @@ COOKIE_POOL_FILE = "config/cookie_pool.json"
 COOKIE_AUTO_SWITCH = True
 
 # 同一 Cookie 累计致命失败（获取不到接口数据）多少次后标记为失效
-# 建议设为 2：获取不到接口数据基本可确认 Cookie 失效
-COOKIE_MAX_FAILURES = 2
+# 设为 1：一次致命失败（如Cookie过期/被封）就立刻判定失效
+COOKIE_MAX_FAILURES = 1
+
+# ==================== Cookie 定时刷新配置 ====================
+# 各平台 Cookie 自动刷新周期（秒），0 = 不自动刷新
+# 快手风控最严格，86400秒 = 24小时刷一次；抖音259200秒 = 3天；其他平台604800秒 = 7天
+COOKIE_REFRESH_INTERVAL = {
+    "ks": 86400,        # 24小时
+    "dy": 259200,       # 3天
+    "bili": 604800,     # 7天
+    "wb": 604800,       # 7天
+    "toutiao": 604800,  # 7天
+    "xhs": 259200,      # 3天
+}
 
 # ==================== 回调机制配置 ====================
 # 全局回调开关（任务完成后自动 POST 结果到回调地址）
@@ -266,6 +306,7 @@ PROXY_SWITCH_THRESHOLD = 3
 
 # ==================== 举报投诉配置 ====================
 # 举报时浏览器是否无头模式（False=有头，可看到浏览器操作过程，调试时建议关闭）
+# ⚠ 部署到无桌面的 Linux 服务器时必须改为 True，否则浏览器无法启动
 REPORT_HEADLESS = True
 
 # 是否并行举报（True=同一链接的多个Cookie同时开浏览器举报，False=严格串行逐个执行）

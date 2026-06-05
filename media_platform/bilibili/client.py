@@ -48,15 +48,24 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         self.cookie_urls = ["https://www.bilibili.com"]
         self.playwright_page = playwright_page
         self.cookie_dict = cookie_dict
-        # Initialize proxy pool (from ProxyRefreshMixin)
+        self._cookie_updated = False
         self.init_proxy_pool(proxy_ip_pool)
 
+    def get_updated_cookie_str(self):
+        """返回更新后的cookie字符串（仅当有变化时）"""
+        if self._cookie_updated:
+            self._cookie_updated = False
+            return "; ".join(f"{k}={v}" for k, v in self.cookie_dict.items())
+        return None
+
     async def request(self, method, url, **kwargs) -> Any:
-        # Check if proxy has expired before each request
         await self._refresh_proxy_if_expired()
 
         async with make_async_client(proxy=self.proxy) as client:
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
+        from tools.httpx_util import merge_response_cookies
+        if merge_response_cookies(response, self.cookie_dict, self.headers):
+            self._cookie_updated = True
         try:
             data: Dict = response.json()
         except json.JSONDecodeError:

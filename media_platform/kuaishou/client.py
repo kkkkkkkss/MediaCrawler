@@ -45,15 +45,25 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
         self.playwright_page = playwright_page
         self.cookie_dict = cookie_dict
         self.graphql = KuaiShouGraphQL()
-        # Initialize proxy pool (from ProxyRefreshMixin)
+        self._cookie_updated = False
         self.init_proxy_pool(proxy_ip_pool)
 
+    def get_updated_cookie_str(self) -> Optional[str]:
+        """返回更新后的cookie字符串（仅当有变化时），调用后重置标记"""
+        if self._cookie_updated:
+            self._cookie_updated = False
+            return "; ".join(f"{k}={v}" for k, v in self.cookie_dict.items())
+        return None
+
     async def request(self, method, url, **kwargs) -> Any:
-        # Check if proxy is expired before each request
         await self._refresh_proxy_if_expired()
 
         async with make_async_client(proxy=self.proxy) as client:
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
+        # Set-Cookie 回写：捕获服务端刷新的 token 保持登录态新鲜
+        from tools.httpx_util import merge_response_cookies
+        if merge_response_cookies(response, self.cookie_dict, self.headers):
+            self._cookie_updated = True
         data: Dict = response.json()
         if data.get("errors"):
             raise DataFetchError(data.get("errors", "unkonw error"))
@@ -75,12 +85,7 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
         )
 
     async def request_rest_v2(self, uri: str, data: dict) -> Dict:
-        """
-        Make REST API V2 request (for comment endpoints)
-        :param uri: API endpoint path
-        :param data: request body
-        :return: response data
-        """
+        """REST API V2 请求（评论接口等），同样捕获 Set-Cookie 回写"""
         await self._refresh_proxy_if_expired()
 
         json_str = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
@@ -92,6 +97,9 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
                 timeout=self.timeout,
                 headers=self.headers,
             )
+        from tools.httpx_util import merge_response_cookies
+        if merge_response_cookies(response, self.cookie_dict, self.headers):
+            self._cookie_updated = True
         result: Dict = response.json()
         if result.get("result") != 1:
             raise DataFetchError(f"REST API V2 error: {result}")

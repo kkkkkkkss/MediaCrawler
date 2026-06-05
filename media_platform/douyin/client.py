@@ -50,8 +50,15 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         ]
         self.playwright_page = playwright_page
         self.cookie_dict = cookie_dict
-        # Initialize proxy pool (from ProxyRefreshMixin)
+        self._cookie_updated = False
         self.init_proxy_pool(proxy_ip_pool)
+
+    def get_updated_cookie_str(self) -> Optional[str]:
+        """返回更新后的cookie字符串（仅当有变化时）"""
+        if self._cookie_updated:
+            self._cookie_updated = False
+            return "; ".join(f"{k}={v}" for k, v in self.cookie_dict.items())
+        return None
 
     async def __process_req_params(
         self,
@@ -106,11 +113,14 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
             params["a_bogus"] = a_bogus
 
     async def request(self, method, url, **kwargs):
-        # Check whether the proxy has expired before each request
         await self._refresh_proxy_if_expired()
 
         async with make_async_client(proxy=self.proxy) as client:
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
+        # Set-Cookie 回写：捕获服务端刷新的 token
+        from tools.httpx_util import merge_response_cookies
+        if merge_response_cookies(response, self.cookie_dict, self.headers):
+            self._cookie_updated = True
         try:
             if response.text == "" or response.text == "blocked":
                 utils.logger.error(f"request params incrr, response.text: {response.text}")
