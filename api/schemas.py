@@ -170,13 +170,16 @@ class UrlCheckResult(BaseModel):
     id: int = Field(..., description="序号")
     url: str = Field(..., description="原始URL")
     platform: str = Field(default="", description="检测到的平台: dy/ks/bili/wb/toutiao")
+    source_platform: str = Field(default="", description="原始来源平台；西瓜链接显示为 xigua，但检测链路仍走 toutiao")
     content_type: str = Field(default="", description="内容类型: video/article/note")
     author: str = Field(default="", description="作者名称")
     praise_count: Optional[int] = Field(default=None, description="点赞数")
     reply_count: Optional[int] = Field(default=None, description="评论数")
     visit_count: Optional[int] = Field(default=None, description="播放量/阅读量")
     share_count: Optional[int] = Field(default=None, description="转发/分享数")
-    is_valid: int = Field(default=0, description="有效性: 1=有效, 2=无效/已删除")
+    is_valid: int = Field(default=0, description="有效性: 1=有效, 2=无效, 3=不支持, 4=检测异常/待复核")
+    validity_label: str = Field(default="", description="有效性中文文案")
+    status_reason: str = Field(default="", description="检测说明或异常原因")
 
 
 class SingleUrlResponse(BaseModel):

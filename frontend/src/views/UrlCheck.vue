@@ -35,9 +35,12 @@
             <el-descriptions-item label="URL">{{ singleResult.url }}</el-descriptions-item>
             <el-descriptions-item label="平台">{{ platformName(singleResult.platform) }}</el-descriptions-item>
             <el-descriptions-item label="有效性">
-              <el-tag :type="singleResult.is_valid === 1 ? 'success' : 'danger'">
-                {{ singleResult.is_valid === 1 ? '有效' : '无效' }}
+              <el-tag :type="validityType(singleResult)">
+                {{ validityText(singleResult) }}
               </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item v-if="singleResult.status_reason" label="检测说明">
+              {{ singleResult.status_reason }}
             </el-descriptions-item>
             <el-descriptions-item label="作者">{{ singleResult.author || '-' }}</el-descriptions-item>
             <el-descriptions-item label="点赞数">{{ singleResult.praise_count ?? '-' }}</el-descriptions-item>
@@ -208,6 +211,14 @@ import { ElMessage } from 'element-plus'
 const router = useRouter()
 const PLATFORM_MAP = { dy: '抖音', ks: '快手', bili: 'B站', toutiao: '今日头条', xhs: '小红书', wb: '微博' }
 const platformName = (k) => PLATFORM_MAP[k] || k || '未知'
+const VALIDITY_MAP = {
+  1: { text: '有效', type: 'success' },
+  2: { text: '无效', type: 'danger' },
+  3: { text: '不支持', type: 'info' },
+  4: { text: '检测异常', type: 'warning' },
+}
+const validityText = (r) => r?.validity_label || VALIDITY_MAP[r?.is_valid]?.text || '未知'
+const validityType = (r) => VALIDITY_MAP[r?.is_valid]?.type || 'info'
 
 const activeTab = ref('single')
 

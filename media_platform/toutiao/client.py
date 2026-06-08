@@ -5,12 +5,15 @@
 
 import asyncio
 import copy
+import html
 import json
+import re
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import httpx
 from playwright.async_api import BrowserContext, Page
 
+import config
 from base.base_crawler import AbstractApiClient
 from tools import utils
 from tools.httpx_util import make_async_client
@@ -85,8 +88,13 @@ class ToutiaoClient(AbstractApiClient):
         utils.logger.info(f"[ToutiaoClient] 导航到: {detail_url}")
         try:
             # 导航到文章页面（增加等待时间，确保页面完全渲染避免并发时加载不完整）
-            await self.playwright_page.goto(detail_url, wait_until="domcontentloaded", timeout=15000)
-            await asyncio.sleep(3)
+            # 旧逻辑固定 15s + 3s 等待，代理批量下坏出口会显著拖慢吞吐；改为可配置。
+            await self.playwright_page.goto(
+                detail_url,
+                wait_until="domcontentloaded",
+                timeout=getattr(config, "URLCHECK_TOUTIAO_NAV_TIMEOUT_MS", 10000),
+            )
+            await asyncio.sleep(getattr(config, "URLCHECK_TOUTIAO_AFTER_NAV_SLEEP_SEC", 2))
 
             # 尝试从页面 SSR 数据中提取 JSON
             # 头条的 SSR 数据通常在 window.__INITIAL_STATE__ 或 INITIAL_PROPS 中
@@ -141,6 +149,196 @@ class ToutiaoClient(AbstractApiClient):
             res = await self.get(detail_uri, detail_params)
             return res
         except Exception:
+            return None
+
+    async def get_mobile_article_state(self, item_id: str) -> Dict[str, Any]:
+        """
+        通过头条移动端公开页确认内容状态。
+
+        旧逻辑完全依赖桌面端 Playwright 页面，批量代理下容易拿到验证码/空白壳页；
+        移动端 info/page 更轻，作为兜底只负责确认 alive/dead，不用于提取互动量。
+        """
+        timeout = getattr(config, "URLCHECK_TOUTIAO_MOBILE_TIMEOUT_SEC", 12)
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
+                "Mobile/15E148 Safari/604.1"
+            ),
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "application/json;q=0.8,*/*;q=0.7"
+            ),
+            "Referer": "https://m.toutiao.com/",
+        }
+        info_url = f"https://m.toutiao.com/i{item_id}/info/"
+        page_url = f"https://m.toutiao.com/i{item_id}/"
+
+        try:
+            async with make_async_client(
+                proxy=self.proxy,
+                timeout=timeout,
+                follow_redirects=True,
+                headers=headers,
+            ) as client:
+                info_resp = await client.get(info_url)
+                try:
+                    info_json = info_resp.json()
+                except Exception:
+                    info_json = {}
+
+                data = info_json.get("data") if isinstance(info_json, dict) else None
+                has_content_data = self._has_mobile_content_data(data)
+                if isinstance(data, dict) and has_content_data:
+                    title = (
+                        data.get("title")
+                        or data.get("abstract")
+                        or data.get("content")
+                        or ""
+                    )
+                    return {
+                        "state": "alive",
+                        "reason": "移动端 info 接口返回内容数据",
+                        "title": self._clean_mobile_title(str(title)),
+                        "metrics": self._extract_mobile_metrics(data),
+                        "raw_json": info_json,
+                    }
+
+                page_resp = await client.get(page_url)
+                page_text = page_resp.text or ""
+                title = self._extract_mobile_title(page_text)
+                generic_title = title in ("", "今日头条")
+                final_url = str(page_resp.url)
+
+                if page_resp.status_code == 404 and generic_title:
+                    return {
+                        "state": "dead",
+                        "reason": "移动端页面返回 404 且无内容标题",
+                        "title": title,
+                        "raw_json": info_json,
+                    }
+
+                if isinstance(data, dict) and data and not has_content_data and generic_title:
+                    return {
+                        "state": "dead",
+                        "reason": "移动端 info 为空壳且页面无内容标题",
+                        "title": title,
+                        "raw_json": info_json,
+                    }
+
+                if page_resp.status_code == 200 and not generic_title:
+                    return {
+                        "state": "alive",
+                        "reason": "移动端页面返回内容标题",
+                        "title": title,
+                        "metrics": self._extract_mobile_metrics(data if isinstance(data, dict) else {}),
+                        "final_url": final_url,
+                        "raw_json": info_json,
+                    }
+
+                # info 为空但页面也不是明确 404 时，保守交还桌面端/异常路径处理。
+                return {
+                    "state": "unknown",
+                    "reason": (
+                        f"移动端无法确认 status={page_resp.status_code}, "
+                        f"title={title or '-'}"
+                    ),
+                    "title": title,
+                    "final_url": final_url,
+                    "raw_json": info_json,
+                }
+        except Exception as e:
+            utils.logger.warning(
+                f"[ToutiaoClient] 移动端状态确认失败 item_id={item_id}: {e}"
+            )
+            return {"state": "unknown", "reason": f"移动端确认异常: {e}"}
+
+    @staticmethod
+    def _extract_mobile_title(page_text: str) -> str:
+        match = re.search(r"<title[^>]*>(.*?)</title>", page_text or "", re.I | re.S)
+        if not match:
+            return ""
+        return ToutiaoClient._clean_mobile_title(match.group(1))
+
+    @staticmethod
+    def _clean_mobile_title(title: str) -> str:
+        cleaned = html.unescape(re.sub(r"<[^>]+>", "", title or ""))
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned.replace(" - 今日头条", "").strip()
+
+    @staticmethod
+    def _has_mobile_content_data(data: Any) -> bool:
+        """
+        判断移动端 info 是否真的包含公开内容。
+
+        旧逻辑只要 data 非空就判有效；头条会对部分不可见/下架内容返回 group_source
+        等空壳字段，导致“无效但返回有效”。这里要求有标题、正文、URL 或微头条正文证据。
+        """
+        if not isinstance(data, dict) or not data:
+            return False
+        if any(data.get(field) for field in ("title", "content", "abstract", "url")):
+            return True
+        thread_base = ((data.get("thread") or {}).get("thread_base") or {})
+        if isinstance(thread_base, dict) and any(
+            thread_base.get(field) for field in ("title", "content", "share_url")
+        ):
+            return True
+        return False
+
+    @classmethod
+    def _extract_mobile_metrics(cls, data: Dict[str, Any]) -> Dict[str, Optional[int]]:
+        """
+        从移动端 info 数据提取转赞评读数。
+
+        旧逻辑只从桌面 DOM 读互动量，代理出口一旦返回登录页就全空；
+        移动端公开接口已返回同类字段时优先复用，降低 `both` 模式对桌面页的依赖。
+        """
+        action = (
+            ((data.get("thread") or {}).get("thread_base") or {}).get("action")
+            if isinstance(data.get("thread"), dict)
+            else {}
+        ) or {}
+
+        praise = cls._to_int(data.get("digg_count"))
+        reply = cls._to_int(data.get("comment_count"))
+        visit = cls._to_int(data.get("impression_count"))
+        share = cls._to_int(data.get("repost_count"))
+
+        if praise is None:
+            praise = cls._to_int(action.get("digg_count"))
+        if reply is None:
+            reply = cls._to_int(action.get("comment_count"))
+        if visit is None:
+            visit = cls._to_int(action.get("read_count")) or cls._to_int(action.get("play_count"))
+        if share is None:
+            share = cls._to_int(action.get("forward_count"))
+
+        return {
+            "praise_count": praise,
+            "reply_count": reply,
+            "visit_count": visit,
+            "share_count": share,
+        }
+
+    @staticmethod
+    def _to_int(value: Any) -> Optional[int]:
+        if value is None or value == "":
+            return None
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (int, float)):
+            return int(value)
+        text = str(value).strip().replace(",", "")
+        multiplier = 1
+        if text.endswith("万"):
+            multiplier = 10000
+            text = text[:-1]
+        elif text.endswith("亿"):
+            multiplier = 100000000
+            text = text[:-1]
+        try:
+            return int(float(text) * multiplier)
+        except (TypeError, ValueError):
             return None
 
     async def get_article_metrics_from_dom(

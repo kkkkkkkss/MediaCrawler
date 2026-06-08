@@ -12,6 +12,18 @@ import httpx
 
 import config
 from tools import utils
+from tools.url_check_status import STATUS_VALID, validity_label
+
+
+def _format_single_result_for_callback(single_result: Dict[str, Any]) -> Dict[str, Any]:
+    """单条回调补齐批量 JSON 的四态字段，避免下游因两种任务格式不一致而误判。"""
+    item = dict(single_result)
+    status_code = item.get("is_valid")
+    item["is_valid_code"] = status_code
+    item["is_valid"] = status_code == STATUS_VALID
+    item["validity_label"] = item.get("validity_label") or validity_label(status_code)
+    item["status_reason"] = item.get("status_reason", "")
+    return item
 
 
 async def send_callback(
@@ -121,7 +133,7 @@ async def trigger_task_callback(info) -> None:
             "task_id": info.task_id,
             "total": 1,
             "completed_at": datetime.now().isoformat(timespec="seconds"),
-            "results": [info.single_result],
+            "results": [_format_single_result_for_callback(info.single_result)],
         }
 
     if result_data:

@@ -17,7 +17,7 @@ _DOMAIN_PLATFORM_MAP = {
     "b23.tv": "bili",          # B站短链，需重定向解析获取 BV号
     "toutiao.com": "toutiao",
     "toutiao.org": "toutiao",
-    "ixigua.com": "toutiao",
+    "ixigua.com": "xigua",
     "zjurl.cn": "toutiao",
     "xiaohongshu.com": "xhs",
     "xhslink.com": "xhs",
@@ -60,6 +60,17 @@ def detect_platform(url: str) -> Tuple[str, Optional[str]]:
     # 尝试提取作品 ID
     content_id = _extract_content_id(platform, url, parsed.path, parsed.query)
     return platform, content_id
+
+
+def detect_source_platform(url: str, platform: str) -> str:
+    """区分检测链路平台和原始来源平台；西瓜当前不走头条链路，直接展示为不支持。"""
+    try:
+        hostname = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return platform
+    if platform in ("toutiao", "xigua") and (hostname == "ixigua.com" or hostname.endswith(".ixigua.com")):
+        return "xigua"
+    return platform
 
 
 def _extract_content_id(
@@ -105,7 +116,7 @@ def _extract_content_id(
             return m.group(1)
         return None
 
-    if platform == "toutiao":
+    if platform in ("toutiao", "xigua"):
         # /article/7633568562946327083/ 或 /i7629519642230538787/ 或 /a7629519642230538787/
         m = re.search(r"/(?:article|i|a)/?(\d{15,})", path)
         if m:
@@ -169,6 +180,7 @@ def group_urls_by_platform(
         url = row.get("url", "")
         platform, content_id = detect_platform(url)
         row["_platform"] = platform
+        row["_source_platform"] = detect_source_platform(url, platform)
         row["_content_id"] = content_id
         groups.setdefault(platform, []).append(row)
     return groups

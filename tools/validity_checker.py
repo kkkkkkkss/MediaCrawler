@@ -98,7 +98,9 @@ _REDIRECT_DEAD_PATTERNS: Dict[str, list] = {
 }
 
 
-async def http_pre_check(url: str, platform: str) -> Tuple[ValidityStatus, Optional[str]]:
+async def http_pre_check(
+    url: str, platform: str, proxy: Optional[str] = None
+) -> Tuple[ValidityStatus, Optional[str]]:
     """
     第一层：HTTP 预检。
     用 httpx 发送 GET 请求并跟随重定向，通过最终 URL 和状态码快速判断。
@@ -113,6 +115,7 @@ async def http_pre_check(url: str, platform: str) -> Tuple[ValidityStatus, Optio
             follow_redirects=True,
             timeout=15,
             verify=False,
+            proxy=proxy,
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             },
@@ -128,6 +131,13 @@ async def http_pre_check(url: str, platform: str) -> Tuple[ValidityStatus, Optio
 
             # 4xx/5xx
             if status_code >= 400:
+                if proxy:
+                    # 代理模式下 403/407/5xx 更常见于出口或认证问题，不能证明作品失效。
+                    # 只保留明确 404 为无效，其他交给浏览器/异常路径处理。
+                    utils.logger.info(
+                        f"[http_pre_check] 代理预检 HTTP {status_code}，转浏览器确认: {url}"
+                    )
+                    return ValidityStatus.NEED_BROWSER, final_url
                 utils.logger.info(f"[http_pre_check] HTTP {status_code} → {url}")
                 return ValidityStatus.INVALID_UNKNOWN, final_url
 

@@ -7,7 +7,8 @@
 # @Time    : 2023/12/2 13:45
 # @Desc    : IP proxy pool implementation
 import random
-from typing import Dict, List
+import asyncio
+from typing import Dict, List, Optional
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -42,6 +43,21 @@ class ProxyIpPool:
         self.proxy_list: List[IpInfoModel] = []
         self.ip_provider: ProxyProvider = ip_provider
         self.current_proxy: IpInfoModel | None = None  # Currently used proxy
+        self._leased_proxy_keys: set[str] = set()
+        self._checkout_lock = asyncio.Lock()
+
+    @staticmethod
+    def proxy_key(proxy: IpInfoModel) -> str:
+        return f"{proxy.ip}:{proxy.port}"
+
+    @staticmethod
+    def proxy_url(proxy: IpInfoModel) -> str:
+        protocol_raw = (proxy.protocol or "http").strip()
+        # 兼容服务商返回的 http、http:、http:// 三种写法；旧拼接会把 http:// 变成 http:://。
+        protocol = protocol_raw if protocol_raw.endswith("://") else protocol_raw.rstrip(":/") + "://"
+        if proxy.user and proxy.password:
+            return f"{protocol}{proxy.user}:{proxy.password}@{proxy.ip}:{proxy.port}"
+        return f"{protocol}{proxy.ip}:{proxy.port}"
 
     async def load_proxies(self) -> None:
         """
@@ -61,13 +77,7 @@ class ProxyIpPool:
             f"[ProxyIpPool._is_valid_proxy] testing {proxy.ip} is it valid "
         )
         try:
-            # httpx 0.28.1 requires passing proxy URL string directly, not a dictionary
-            if proxy.user and proxy.password:
-                proxy_url = f"http://{proxy.user}:{proxy.password}@{proxy.ip}:{proxy.port}"
-            else:
-                proxy_url = f"http://{proxy.ip}:{proxy.port}"
-
-            async with make_async_client(proxy=proxy_url) as client:
+            async with make_async_client(proxy=self.proxy_url(proxy)) as client:
                 response = await client.get(self.valid_ip_url)
             if response.status_code == 200:
                 return True
@@ -97,6 +107,90 @@ class ProxyIpPool:
                 )
         self.current_proxy = proxy  # Save currently used proxy
         return proxy
+
+    async def checkout_proxy(
+        self,
+        min_ttl_sec: int = 90,
+        retry_count: int = 3,
+        retry_interval_sec: int = 60,
+    ) -> IpInfoModel:
+        """
+        为浏览器 worker 独占提取一个代理。
+        旧的 current_proxy 适合单客户端复用；头条多 worker 必须独占 IP，
+        否则多个浏览器仍共用同一出口，无法分散平台风控。
+        """
+        async with self._checkout_lock:
+            for attempt in range(retry_count + 1):
+                proxy = await self._pop_available_proxy(min_ttl_sec)
+                if proxy:
+                    self._leased_proxy_keys.add(self.proxy_key(proxy))
+                    self.current_proxy = proxy
+                    return proxy
+
+                # 豌豆等短效代理 API 不适合多个 worker 同时刷新；checkout 串行化避免重复提取。
+                await self._reload_proxies()
+                proxy = await self._pop_available_proxy(min_ttl_sec)
+                if proxy:
+                    self._leased_proxy_keys.add(self.proxy_key(proxy))
+                    self.current_proxy = proxy
+                    return proxy
+
+                if attempt < retry_count:
+                    utils.logger.warning(
+                        f"[ProxyIpPool.checkout_proxy] 暂无可用独占代理，"
+                        f"{retry_interval_sec}s 后重试({attempt + 1}/{retry_count})"
+                    )
+                    await asyncio.sleep(retry_interval_sec)
+
+        raise RuntimeError("代理池无可用独占 IP")
+
+    async def _pop_available_proxy(self, min_ttl_sec: int) -> Optional[IpInfoModel]:
+        candidates = [
+            p for p in self.proxy_list
+            if self.proxy_key(p) not in self._leased_proxy_keys
+            and not p.is_expired(min_ttl_sec)
+        ]
+        while candidates:
+            proxy = random.choice(candidates)
+            self.proxy_list.remove(proxy)
+            if self.enable_validate_ip:
+                try:
+                    if not await self._is_valid_proxy(proxy):
+                        candidates.remove(proxy)
+                        continue
+                except Exception as e:
+                    # 短效代理池里可能混入 407/超时出口；跳过坏 IP，不能让整个 worker 直接失败。
+                    utils.logger.warning(
+                        f"[ProxyIpPool._pop_available_proxy] 跳过不可用代理 "
+                        f"{self.proxy_key(proxy)}: {e}"
+                    )
+                    candidates.remove(proxy)
+                    continue
+            return proxy
+        return None
+
+    def release_proxy(self, proxy: Optional[IpInfoModel]) -> None:
+        """释放 worker 独占代理；未过期的 IP 可回到池中复用。"""
+        if not proxy:
+            return
+        key = self.proxy_key(proxy)
+        self._leased_proxy_keys.discard(key)
+        if not proxy.is_expired(30) and all(self.proxy_key(p) != key for p in self.proxy_list):
+            self.proxy_list.append(proxy)
+
+    def drop_proxy(self, proxy: Optional[IpInfoModel], reason: str = "") -> None:
+        """废弃坏代理；连续空白页/代理异常时不能再回池复用。"""
+        if not proxy:
+            return
+        key = self.proxy_key(proxy)
+        self._leased_proxy_keys.discard(key)
+        self.proxy_list = [p for p in self.proxy_list if self.proxy_key(p) != key]
+        if self.current_proxy and self.proxy_key(self.current_proxy) == key:
+            self.current_proxy = None
+        utils.logger.warning(
+            f"[ProxyIpPool.drop_proxy] 废弃代理 {key}"
+            f"{'，原因: ' + reason if reason else ''}"
+        )
 
     def is_current_proxy_expired(self, buffer_seconds: int = 30) -> bool:
         """

@@ -39,6 +39,7 @@ class ProxyProvider(ABC):
 class IpCache:
     def __init__(self):
         self.cache_client: AbstractCache = CacheFactory.create_cache(cache_type=config.CACHE_TYPE_REDIS)
+        self._disabled = False
 
     def set_ip(self, ip_key: str, ip_value_info: str, ex: int):
         """
@@ -48,7 +49,14 @@ class IpCache:
         :param ex:
         :return:
         """
-        self.cache_client.set(key=ip_key, value=ip_value_info, expire_time=ex)
+        if self._disabled:
+            return
+        try:
+            self.cache_client.set(key=ip_key, value=ip_value_info, expire_time=ex)
+        except Exception as e:
+            # 代理缓存只是性能优化；Redis 不可用时不能阻断短效 IP 提取和检测主流程。
+            self._disabled = True
+            utils.logger.warning(f"[IpCache.set_ip] skip proxy cache write: {e}")
 
     def load_all_ip(self, proxy_brand_name: str) -> List[IpInfoModel]:
         """
@@ -56,14 +64,18 @@ class IpCache:
         :param proxy_brand_name: Proxy provider name
         :return:
         """
+        if self._disabled:
+            return []
         all_ip_list: List[IpInfoModel] = []
-        all_ip_keys: List[str] = self.cache_client.keys(pattern=f"{proxy_brand_name}_*")
         try:
+            all_ip_keys: List[str] = self.cache_client.keys(pattern=f"{proxy_brand_name}_*")
             for ip_key in all_ip_keys:
                 ip_value = self.cache_client.get(ip_key)
                 if not ip_value:
                     continue
                 all_ip_list.append(IpInfoModel(**json.loads(ip_value)))
         except Exception as e:
-            utils.logger.error("[IpCache.load_all_ip] get ip err from redis db", e)
+            # Redis 缓存失效不等于代理服务商不可用；返回空列表让 provider 直接提取新 IP。
+            self._disabled = True
+            utils.logger.warning(f"[IpCache.load_all_ip] skip proxy cache read: {e}")
         return all_ip_list

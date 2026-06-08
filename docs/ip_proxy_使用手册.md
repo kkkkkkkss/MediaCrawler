@@ -10,7 +10,7 @@ IP 代理池用于规避平台对单 IP 访问频率的限制和封禁。本项�
 - **缓存机制**：通过 Redis 缓存未过期 IP，避免重复获取
 - **Playwright 集成**：自动将代理注入浏览器上下文
 - **httpx 集成**：API 请求自动通过代理发送
-- **隧道代理**：支持固定入口、自动切换出口的隧道模式
+- **头条批量检测**：支持每个 url_check worker 绑定独立短效 IP，HTTP 预检和浏览器使用同一出口
 - **多浏览器并发**：支持每个浏览器绑定独立 IP 出口
 
 ---
@@ -47,11 +47,11 @@ WANDOU_APP_KEY=你的app_key
 # 启用 IP 代理
 ENABLE_IP_PROXY = True
 
-# 代理池中维持的 IP 数量（建议 2~5）
-IP_PROXY_POOL_COUNT = 2
+# 代理池中维持的 IP 数量（服务器 8 worker 建议 30，给坏出口切换留余量）
+IP_PROXY_POOL_COUNT = 30
 
 # 代理服务商名称：kuaidaili | wandouhttp
-IP_PROXY_PROVIDER_NAME = "kuaidaili"
+IP_PROXY_PROVIDER_NAME = "wandouhttp"
 ```
 
 ### 第四步：确保 Redis 可用
@@ -72,9 +72,15 @@ REDIS_DB_NUM=0
 | 参数                      | 位置              | 默认值        | 说明                                      |
 |---------------------------|-------------------|---------------|-------------------------------------------|
 | `ENABLE_IP_PROXY`         | base_config.py    | `False`       | IP 代理总开关                              |
-| `IP_PROXY_POOL_COUNT`     | base_config.py    | `2`           | 代理池维持的 IP 数量                       |
-| `IP_PROXY_PROVIDER_NAME`  | base_config.py    | `"kuaidaili"`  | 服务商：`kuaidaili` / `wandouhttp`        |
+| `IP_PROXY_POOL_COUNT`     | base_config.py    | `30`          | 代理池维持的 IP 数量，头条代理并发时建议不小于 worker 数并预留坏出口切换余量 |
+| `IP_PROXY_PROVIDER_NAME`  | base_config.py    | `"wandouhttp"` | 服务商：`kuaidaili` / `wandouhttp`        |
 | `PROXY_SWITCH_THRESHOLD`  | base_config.py    | `3`           | url_check 模式下连续失败几次切换代理       |
+| `URLCHECK_TOUTIAO_PROXY_CONCURRENCY` | base_config.py | `8` | 头条代理模式 worker 并发数，每个 worker 独占一个 IP |
+| `URLCHECK_PROXY_MIN_TTL_SEC` | base_config.py | `90` | IP 剩余有效期低于该值时停止取新 URL 并换 IP |
+| `URLCHECK_PROXY_ROW_RETRY` | base_config.py | `6` | 同一头条链接遇到疑似代理出口异常时，换 IP 后重试次数 |
+| `URLCHECK_GENERIC_PROXY_PLATFORMS` | base_config.py | `[]` | 全局代理可套用的平台白名单；默认不套抖音等账号态平台，避免 Cookie 与出口同时变化 |
+| `URLCHECK_TOUTIAO_MOBILE_FALLBACK` | base_config.py | `True` | 头条桌面端异常/疑似误判时，用移动端公开页复核有效性 |
+| `URLCHECK_TOUTIAO_MOBILE_FAST_VALIDITY` | base_config.py | `True` | 头条优先用移动端公开接口做快速确认，`both` 模式有指标时直接短路 |
 | `DISABLE_SSL_VERIFY`      | base_config.py    | `False`       | 使用代理时可能需要禁用 SSL 验证           |
 
 ---
@@ -86,7 +92,7 @@ REDIS_DB_NUM=0
   │
   ├─ ENABLE_IP_PROXY = True ?
   │     │
-  │     ├─ Yes → ProxyIpPool.get_or_refresh_proxy()
+  │     ├─ Yes → ProxyIpPool.get_or_refresh_proxy()/checkout_proxy()
   │     │         │
   │     │         ├─ 当前代理未过期 → 直接使用
   │     │         └─ 当前代理已过期/不存在
@@ -114,8 +120,13 @@ REDIS_DB_NUM=0
 `url_check` 模式会自动集成代理池。在 `core.py` 中：
 
 - 浏览器启动时自动将代理注入 Playwright context
-- API 请求通过 `ProxyRefreshMixin` 自动刷新过期代理
-- 连续失败超过 `PROXY_SWITCH_THRESHOLD` 次自动切换
+- 头条批量检测会使用 `checkout_proxy()` 为每个 worker 独占一个豌豆 API 提取 IP
+- HTTP 预检和 Playwright 浏览器使用同一个代理出口，避免“预检直连、浏览器代理”的判断割裂
+- IP 剩余有效期低于 `URLCHECK_PROXY_MIN_TTL_SEC` 时关闭当前浏览器上下文并换 IP
+- 同一代理连续空白页、App 壳页、验证码或加载异常时废弃当前 IP，换新 IP 后继续
+- 代理获取失败时直接写 `4=检测异常` 并熔断剩余队列，不回退服务器直连
+- 头条移动端公开接口可确认内容时，会优先用于有效性和指标提取，减少桌面端登录/验证码页对 `both` 模式的影响
+- 全局 `ENABLE_IP_PROXY=True` 不会默认影响抖音等账号态平台；如确需让非头条平台使用通用代理，需要显式加入 `URLCHECK_GENERIC_PROXY_PLATFORMS`
 
 ### 2. 标准爬虫模式（dy/bili/ks 等）
 
@@ -149,9 +160,7 @@ class MyClient(ProxyRefreshMixin):
 
 ---
 
-## 隧道代理详细配置
-
-### 什么是隧道代理
+## 隧道代理说明
 
 隧道代理（Tunnel Proxy）是一种固定入口地址、服务商自动切换出口 IP 的代理方式。与普通代理池的区别：
 
@@ -161,46 +170,13 @@ class MyClient(ProxyRefreshMixin):
 | 出口IP | 固定（直到过期） | 每次请求/每个Session自动切换 |
 | 需要Redis | 是（缓存IP） | 否 |
 | 代码复杂度 | 高（池管理、验证、轮换） | 低（配一个URL即可） |
-| 适用场景 | 需要IP稳定性（如保持登录会话） | 高频请求、不需要IP连续性 |
-
-### 配置方式
-
-在 `.env` 中添加隧道代理地址：
-
-```bash
-# 隧道代理地址（格式：协议://用户名:密码@隧道地址:端口）
-TUNNEL_PROXY_URL=http://用户名:密码@tunnel.example.com:12345
-```
-
-在 `config/base_config.py` 中启用：
-
-```python
-# 使用隧道代理（优先级高于普通代理池）
-# 启用后 ENABLE_IP_PROXY 的普通代理池逻辑被跳过
-ENABLE_TUNNEL_PROXY = True
-TUNNEL_PROXY_URL = ""  # 从 .env 读取，这里留空
-```
-
-### 主流隧道代理服务商
-
-| 服务商 | 隧道地址格式 | 特点 | 价格参考 |
-|--------|-------------|------|---------|
-| 快代理隧道 | `http://user:pwd@tps.kdlapi.com:15818` | 支持Session粘滞、城市定向 | ~100元/天 |
-| 芝麻代理 | `http://user:pwd@http-dynamic.xiaoxiangdaili.com:10030` | 自动切IP、支持HTTP/SOCKS5 | ~80元/天 |
-| 青果代理 | `http://user:pwd@tunnel.qg.net:17010` | 支持多并发Session | ~60元/天 |
-| 亮数据(Bright Data) | `http://user:pwd@brd.superproxy.io:22225` | 国际服务商，全球IP | $500+/月 |
+| 适用场景 | 需要 IP 稳定性，浏览器会话能保持同一出口 | 高频接口请求、不要求浏览器会话 IP 稳定 |
 
 ### Session 粘滞（保持同一出口IP）
 
-部分业务需要同一个会话内保持IP不变（如登录后的操作）。隧道代理支持通过 Session ID 实现：
+头条 Playwright 批量检测不建议使用“固定入口但每次请求随机出口”的隧道代理。浏览器页面、静态资源、XHR、接口请求如果落到不同出口，平台侧画像会不稳定，容易出现空白页、验证页或请求异常。
 
-```bash
-# 快代理示例：在用户名中添加 session-xxx 后缀
-TUNNEL_PROXY_URL=http://用户名-session-abc123:密码@tps.kdlapi.com:15818
-
-# 芝麻代理示例：添加 session 参数
-TUNNEL_PROXY_URL=http://用户名:密码@tunnel.example.com:10030?session=abc123
-```
+只有隧道服务商明确支持 Session 粘滞，并且能保证一个 worker 的浏览器上下文在有效期内固定出口 IP，才适合接入浏览器检测。当前代码已经落地的是普通短效代理池方案：豌豆 HTTP API 提取 `ip:port`，每个头条 worker 独占一个 IP，过期或连续异常后重建浏览器换 IP。
 
 ---
 
@@ -210,46 +186,29 @@ TUNNEL_PROXY_URL=http://用户名:密码@tunnel.example.com:10030?session=abc123
 
 启用同平台多浏览器并发（`PLATFORM_CONCURRENCY > 1`）后，多个浏览器同时运行。如果共用同一个出口 IP，仍可能触发平台的 IP 频率限制。
 
-### 方案一：隧道代理 + Session ID 隔离（推荐）
-
-每个浏览器使用不同的 Session ID，隧道服务商为每个 Session 分配不同的出口 IP：
-
-```python
-# 配置示例（base_config.py）
-ENABLE_TUNNEL_PROXY = True
-
-# 每个 Worker 自动生成唯一 Session ID
-# Worker 1 → session-w1 → 出口 IP: 1.2.3.4
-# Worker 2 → session-w2 → 出口 IP: 5.6.7.8
-# Worker 3 → session-w3 → 出口 IP: 9.10.11.12
-TUNNEL_SESSION_PER_WORKER = True
-```
-
-实现原理：在 `_create_worker_client` 中，为每个 Worker 生成独立的隧道 URL：
-
-```python
-# 伪代码
-base_url = "http://user:pwd@tunnel.example.com:15818"
-worker_url = f"http://user-session-worker{worker_id}:pwd@tunnel.example.com:15818"
-```
-
-### 方案二：普通代理池 + 每浏览器独立 IP
+### 方案一：普通代理池 + 每浏览器独立 IP（头条推荐）
 
 从代理池中为每个浏览器预分配一个独立 IP：
 
 ```python
 # 配置示例
 ENABLE_IP_PROXY = True
-IP_PROXY_POOL_COUNT = 5  # 至少等于最大并发数
+IP_PROXY_POOL_COUNT = 30  # 至少等于最大并发数，并预留坏出口切换余量
+IP_PROXY_PROVIDER_NAME = "wandouhttp"
 
-# 代理分配策略
-PROXY_PER_WORKER = True  # 每个 Worker 绑定独立代理
+# 头条代理模式
+URLCHECK_TOUTIAO_PROXY_CONCURRENCY = 8
+URLCHECK_PROXY_MIN_TTL_SEC = 90
+URLCHECK_PROXY_ROW_RETRY = 6
 ```
 
-### 方案三：不使用代理（当前默认）
+### 方案二：支持 Session 粘滞的隧道代理
 
-如果暂时不考虑 IP 风控，可以不启用代理。多浏览器共用出口 IP，适用于：
-- 头条等不限制 IP 频率的平台
+只有服务商能保证一个浏览器 worker 在整个 session 内固定出口 IP 时，才适合用于 Playwright。固定入口但每次请求随机出口的隧道不适合头条批量检测。
+
+### 方案三：不使用代理（当前总开关默认关闭）
+
+如果暂时不考虑 IP 风控，可以不启用代理。多浏览器共用服务器出口 IP，适用于：
 - 并发数较低（2~3个）
 - 短期批量任务
 
@@ -257,9 +216,10 @@ PROXY_PER_WORKER = True  # 每个 Worker 绑定独立代理
 
 | 场景 | 推荐方案 |
 |------|---------|
-| 头条（无Cookie、无风控） | 方案三：不用代理，直接多开浏览器 |
-| 抖音/快手（严格风控） | 方案一：隧道代理 + Session 隔离 |
-| 大批量（500+条/次） | 方案一或方案二 |
+| 头条 500+ 条批量检测 | 方案一：豌豆 API 提取短效 IP，每 worker 独占 |
+| 头条少量临时检测 | 方案三：不启用代理，低并发慢速跑 |
+| 需要浏览器会话稳定的其他平台 | 方案一，或明确支持 Session 粘滞的方案二 |
+| 固定入口、每请求随机出口的隧道 | 不建议用于 Playwright 批量检测 |
 | 临时少量测试 | 方案三 |
 
 ---
@@ -280,8 +240,9 @@ PROXY_PER_WORKER = True  # 每个 Worker 绑定独立代理
 
 1. 注册并认证：https://h.wandouip.com
 2. 在"个人中心 - 开放接口"获取 `app_key`（`WANDOU_APP_KEY`）
-3. 豌豆HTTP 使用白名单认证（无用户名密码），格式：`http://ip:port`
-4. **注意**：仅支持企业用户
+3. 使用 API 提取短效 IP，返回 `ip`、`port`、`expire_time` 后，代码会按 `http://ip:port` 注入 Playwright 和 httpx
+4. 推荐参数：`xy=1`、`type=2`、`nr=99`、`area_id=0`、`isp=0`
+5. **注意**：头条批量检测不要使用豌豆固定隧道入口的随机出口模式，除非服务商支持 Session 粘滞
 
 ---
 
@@ -329,8 +290,12 @@ ENABLE_IP_PROXY = True
 
 ### Q: 隧道代理和普通代理池能同时启用吗？
 
-不建议。`ENABLE_TUNNEL_PROXY = True` 时优先使用隧道代理，普通代理池逻辑被跳过。两者选一种使用即可。
+当前头条 url_check 落地的是普通短效代理池，不走隧道代理。若后续要接支持 Session 粘滞的隧道，应单独实现每 worker 独立 session，并验证 Playwright 和 httpx 的出口一致。
 
 ### Q: 多浏览器并发时如何确保每个浏览器 IP 不同？
 
-使用隧道代理 + `TUNNEL_SESSION_PER_WORKER = True`，每个 Worker 自动获得不同的出口 IP。如果不用代理，所有浏览器共用服务器出口 IP。
+启用普通代理池后，头条 worker 通过 `checkout_proxy()` 独占一个短效 IP。不要使用 `get_or_refresh_proxy()` 共享 `current_proxy` 做头条并发，否则多个 worker 仍可能共用同一出口。
+
+### Q: 代理获取失败时会不会自动直连？
+
+头条代理模式不会自动直连。代理拿不到、连续多个代理异常或 IP 快过期无法替换时，剩余链接会写 `4=检测异常` 并保留检测说明，目的是保护服务器原出口 IP 不继续触发风控。

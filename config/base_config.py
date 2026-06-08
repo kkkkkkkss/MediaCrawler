@@ -25,13 +25,22 @@ CRAWLER_TYPE = "detail"
 
 # ==================== IP代理配置（防封禁） ====================
 # 是否启用IP代理池（应对平台IP限流/封禁）
-ENABLE_IP_PROXY = False
+ENABLE_IP_PROXY = True
 
-# 代理IP池的IP数量
-IP_PROXY_POOL_COUNT = 2
+# 代理IP池的IP数量。头条 8 worker 需要额外备用 IP，避免坏出口被丢弃后等待重新提取。
+IP_PROXY_POOL_COUNT = 30
 
 # 代理IP服务商，可选值：kuaidaili(快代理)|wandouhttp(豌豆HTTP)
-IP_PROXY_PROVIDER_NAME = "kuaidaili"
+# 头条批量 url_check 当前按“豌豆 API 提取短效 IP”设计，开启 ENABLE_IP_PROXY 后默认走豌豆。
+IP_PROXY_PROVIDER_NAME = "wandouhttp"
+
+# 豌豆 HTTP API 提取短效 IP 参数；真实 WANDOU_APP_KEY 只放 .env，不写入代码。
+WANDOU_PROXY_XY = 1      # 1=http；如需 socks5 再改造 Playwright/httpx 协议格式
+WANDOU_API_TYPE = 2      # JSON 返回
+WANDOU_NR = 99
+WANDOU_AREA_ID = 0
+WANDOU_ISP = 0
+WANDOU_DEFAULT_EXPIRE_SEC = 600
 
 # ==================== 基础浏览器配置 ====================
 # True：无头模式（不打开浏览器窗口，后台运行）
@@ -159,7 +168,7 @@ PLATFORM_CONCURRENCY = {
     "dy": 3,        # 抖音：风控严格，默认单浏览器
     "bili": 3,      # B站：默认单浏览器
     "ks": 3,        # 快手：默认单浏览器
-    "toutiao": 8,   # 头条：不需要登录，可安全多开
+    "toutiao": 2,   # 头条：连续大批量会触发空白页/壳页，默认牺牲速度换稳定性
     "xhs": 1,       # 小红书：默认单浏览器
     "wb": 3,        # 微博：默认单浏览器
 }
@@ -170,7 +179,7 @@ PLATFORM_SLEEP_SEC = {
     "dy": 2,
     "bili": 2,
     "ks": 2,
-    "toutiao": 1,   # 头条无登录限制，间隔可更短
+    "toutiao": 2,   # 代理模式下每个 worker 独占 IP，可恢复较高吞吐
     "xhs": 2,
     "wb": 2,
 }
@@ -216,6 +225,41 @@ URLCHECK_DETAIL_COOKIE_PURPOSE = {
 # 多浏览器启动间隔（秒）：每个 Worker 在 [0, 该值] 之间随机延迟后再启动浏览器
 # 避免同一 IP 同时打开多个浏览器触发风控，设为 0 则同时启动（不推荐）
 BROWSER_STAGGER_MAX_SEC = 3.0
+
+# 头条批量检测遇到空白页/App壳页/疑似风控时的冷却。
+# 旧逻辑把同一个 60s 同时用于“单条二次确认”和“重建浏览器”，导致 App 壳页特别慢。
+# 新逻辑拆分：单条二次确认短等，连续异常重建再稍长冷却。
+URLCHECK_TOUTIAO_RISK_COOLDOWN_SEC = 10  # 兼容旧配置读取
+URLCHECK_TOUTIAO_CONFIRM_DELAY_SEC = 2
+URLCHECK_TOUTIAO_CONFIRM_ABNORMAL = False
+URLCHECK_TOUTIAO_REBUILD_COOLDOWN_SEC = 3
+URLCHECK_TOUTIAO_REBUILD_AFTER_RISK = 3
+URLCHECK_TOUTIAO_NAV_TIMEOUT_MS = 8000
+URLCHECK_TOUTIAO_AFTER_NAV_SLEEP_SEC = 1
+# 头条移动端公开页比桌面端更少触发验证码；只作为桌面端异常/疑似误判时的兜底证据。
+# 新逻辑相对旧逻辑的差异：不再只凭桌面端空白/“内容不存在”下结论，先用 m.toutiao.com 复核。
+URLCHECK_TOUTIAO_MOBILE_FALLBACK = True
+URLCHECK_TOUTIAO_MOBILE_FAST_VALIDITY = True
+URLCHECK_TOUTIAO_MOBILE_TIMEOUT_SEC = 12
+
+# 头条代理模式：每个 worker 独占一个豌豆 API 提取 IP，代理不足时等待，不回退直连。
+URLCHECK_TOUTIAO_PROXY_CONCURRENCY = 8
+URLCHECK_PROXY_MIN_TTL_SEC = 90
+URLCHECK_PROXY_ACQUIRE_RETRY_INTERVAL_SEC = 10
+URLCHECK_PROXY_ACQUIRE_MAX_RETRIES = 3
+URLCHECK_PROXY_FAIL_CLOSED_PLATFORMS = ["toutiao"]
+URLCHECK_PROXY_BAD_STREAK_THRESHOLD = 3
+URLCHECK_PROXY_ROW_RETRY = 6
+URLCHECK_COOKIE_ROW_RETRY = 1
+# 旧逻辑每条 URL 先用 httpx 预检再走浏览器，代理批量时会额外消耗出口请求且不能确认 403/5xx。
+# 新逻辑默认让头条代理 worker 直接用浏览器确认；需要排查 HTTP 层时可临时改 True。
+URLCHECK_PROXY_WORKER_PRECHECK = False
+# 代理本次主要解决头条出口风控；抖音等账号态平台默认不套豌豆代理，避免账号登录画像突变。
+URLCHECK_GENERIC_PROXY_PLATFORMS = []
+
+# url_check 多 worker 使用的临时浏览器 profile 会反复生成；任务结束后只清理 worker_*，
+# 不触碰登录态目录，避免本地验证垃圾堆积。
+URLCHECK_CLEAN_WORKER_PROFILE = True
 
 # 请求间隔抖动比例：在 PLATFORM_SLEEP_SEC 基础上添加 ±该比例的随机偏移
 # 例如 0.3 表示 ±30%，2 秒基础间隔实际为 1.4~2.6 秒随机

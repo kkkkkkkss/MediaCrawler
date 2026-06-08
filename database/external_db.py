@@ -89,36 +89,52 @@ class ExternalDB:
     async def update_metrics(
         self,
         row_id: int,
-        is_valid: int,
+        is_valid: Optional[int] = None,
         praise_count: Optional[int] = None,
         reply_count: Optional[int] = None,
         visit_count: Optional[int] = None,
         share_count: Optional[int] = None,
         forward_count: Optional[str] = None,
+        clear_metrics: bool = False,
     ):
         """
         按 id 更新 bigscreen_data_test 表中的有效性和指标字段。
-        is_valid: 1=有效, 2=无效/获取失败
+        is_valid: 1=有效, 2=无效, 3=不支持, 4=检测异常/待复核
         """
         await self.ensure_pool()
-        set_parts = ["is_valid = %s"]
-        params: list = [is_valid]
+        set_parts = []
+        params: list = []
 
-        if praise_count is not None:
-            set_parts.append("praise_count = %s")
-            params.append(praise_count)
-        if reply_count is not None:
-            set_parts.append("reply_count = %s")
-            params.append(reply_count)
-        if visit_count is not None:
-            set_parts.append("visit_count = %s")
-            params.append(visit_count)
-        if share_count is not None:
-            set_parts.append("share_count = %s")
-            params.append(share_count)
-        if forward_count is not None:
-            set_parts.append("forward_count = %s")
-            params.append(forward_count)
+        if is_valid is not None:
+            set_parts.append("is_valid = %s")
+            params.append(is_valid)
+
+        if clear_metrics:
+            # None 平时表示“不更新”；只有 clear_metrics=True 才显式写 NULL，
+            # 用于不支持/检测异常场景清掉旧互动量，避免审核误读历史数据。
+            for col in ("praise_count", "reply_count", "visit_count", "share_count", "forward_count"):
+                set_parts.append(f"{col} = %s")
+                params.append(None)
+        else:
+            if praise_count is not None:
+                set_parts.append("praise_count = %s")
+                params.append(praise_count)
+            if reply_count is not None:
+                set_parts.append("reply_count = %s")
+                params.append(reply_count)
+            if visit_count is not None:
+                set_parts.append("visit_count = %s")
+                params.append(visit_count)
+            if share_count is not None:
+                set_parts.append("share_count = %s")
+                params.append(share_count)
+            if forward_count is not None:
+                set_parts.append("forward_count = %s")
+                params.append(forward_count)
+
+        if not set_parts:
+            utils.logger.debug(f"[ExternalDB] id={row_id} 无字段需要更新")
+            return
 
         params.append(row_id)
         sql = f"UPDATE bigscreen_data_test SET {', '.join(set_parts)} WHERE id = %s"
@@ -127,7 +143,7 @@ class ExternalDB:
             async with conn.cursor() as cur:
                 await cur.execute(sql, params)
         utils.logger.info(
-            f"[ExternalDB] 已更新 id={row_id} is_valid={is_valid}"
+            f"[ExternalDB] 已更新 id={row_id} is_valid={is_valid} clear_metrics={clear_metrics}"
         )
 
     # ────────────────── 写入评论 ──────────────────

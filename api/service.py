@@ -11,9 +11,59 @@ from api.schemas import MysqlSourceRequest, UrlCheckResult
 from api.task_manager import TaskInfo
 from store.url_check_excel_store import generate_url_check_excel, merge_results_to_excel
 from tools import utils
-from tools.url_detector import detect_platform, group_urls_by_platform
+from tools.url_detector import detect_platform, detect_source_platform, group_urls_by_platform
+from tools.url_check_status import (
+    STATUS_EXCEPTION,
+    STATUS_INVALID,
+    STATUS_UNSUPPORTED,
+    STATUS_VALID,
+    URL_CHECK_PLATFORM_ORDER,
+    empty_metrics,
+    is_supported_url_check_platform,
+    should_clear_metrics,
+    validity_label,
+)
 from tools.ai_field_mapper import ai_mapper
 from tools.validity_checker import http_pre_check, check_api_json_validity, is_invalid
+
+
+_PLATFORM_NAMES = {
+    "dy": "抖音", "ks": "快手", "bili": "B站",
+    "toutiao": "头条", "xigua": "西瓜视频", "wb": "微博", "unknown": "未知",
+}
+
+
+def _apply_single_status(result: UrlCheckResult, status_code: int, reason: str = ""):
+    """单条响应也使用四态；特殊状态清空互动量，避免沿用旧字段。"""
+    result.is_valid = status_code
+    result.validity_label = validity_label(status_code)
+    result.status_reason = reason
+    if should_clear_metrics(status_code):
+        result.praise_count = None
+        result.reply_count = None
+        result.visit_count = None
+        result.share_count = None
+
+
+def _result_status_text(result: dict) -> str:
+    return validity_label(result.get("_is_valid"))
+
+
+def _metric_display(metrics: dict, key: str) -> str:
+    value = metrics.get(key)
+    return "-" if value is None else str(value)
+
+
+def _summarize_status_counts(results: list) -> str:
+    counts = {STATUS_VALID: 0, STATUS_INVALID: 0, STATUS_UNSUPPORTED: 0, STATUS_EXCEPTION: 0}
+    for r in results:
+        code = r.get("_is_valid")
+        if code in counts:
+            counts[code] += 1
+    return (
+        f"有效{counts[STATUS_VALID]}, 无效{counts[STATUS_INVALID]}, "
+        f"不支持{counts[STATUS_UNSUPPORTED]}, 异常{counts[STATUS_EXCEPTION]}"
+    )
 
 
 async def run_single_url_check(
@@ -27,13 +77,18 @@ async def run_single_url_check(
     完成后将 UrlCheckResult 存入 info.single_result。
     """
     platform, content_id = detect_platform(url)
-    result = UrlCheckResult(id=1, url=url, platform=platform)
-    _PLATFORM_NAMES = {"dy": "抖音", "ks": "快手", "bili": "B站", "toutiao": "头条", "xhs": "小红书", "wb": "微博"}
-    info.add_log(f"平台识别: {_PLATFORM_NAMES.get(platform, platform)}, content_id={content_id}")
+    source_platform = detect_source_platform(url, platform)
+    result = UrlCheckResult(id=1, url=url, platform=platform, source_platform=source_platform)
+    info.add_log(
+        f"平台识别: {_PLATFORM_NAMES.get(source_platform, _PLATFORM_NAMES.get(platform, platform))}, "
+        f"检测链路={_PLATFORM_NAMES.get(platform, platform)}, content_id={content_id}"
+    )
 
-    if platform == "unknown":
-        result.is_valid = 2
-        info.add_log("未识别的平台 → 标记无效")
+    if not is_supported_url_check_platform(platform):
+        reason = f"平台 {platform or 'unknown'} 暂不支持 url_check，已跳过检测"
+        _apply_single_status(result, STATUS_UNSUPPORTED, reason)
+        result.content_type = _get_platform_type(platform)
+        info.add_log(f"{reason} → 标记不支持")
         info.single_result = result.model_dump()
         return
 
@@ -43,7 +98,7 @@ async def run_single_url_check(
     info.add_log("执行 HTTP 预检...")
     status, final_url = await http_pre_check(url, platform)
     if is_invalid(status):
-        result.is_valid = 2
+        _apply_single_status(result, STATUS_INVALID, f"HTTP 预检失效: {status.value}")
         info.add_log(f"HTTP 预检失效: {status.value} → 标记无效")
         info.single_result = result.model_dump()
         return
@@ -55,11 +110,18 @@ async def run_single_url_check(
     config.URLCHECK_MODE = mode
     config.URLCHECK_ENABLE_COMMENTS = enable_comments
 
+    crawler = None
     async with async_playwright() as pw:
         try:
             from media_platform.url_check.core import UrlCheckCrawler
             crawler = UrlCheckCrawler()
-            row = {"id": 1, "url": url, "_platform": platform, "_content_id": content_id}
+            row = {
+                "id": 1,
+                "url": url,
+                "_platform": platform,
+                "_source_platform": source_platform,
+                "_content_id": content_id,
+            }
             info.add_log("正在启动浏览器客户端...")
             client, _ = await crawler._create_platform_client(platform, pw)
             if client:
@@ -70,15 +132,16 @@ async def run_single_url_check(
                 if raw_json is not None:
                     api_status = check_api_json_validity(platform, raw_json)
                     if is_invalid(api_status):
-                        result.is_valid = 2
+                        _apply_single_status(result, STATUS_INVALID, f"接口字段检测失效: {api_status.value}")
                         info.add_log(f"接口字段检测失效: {api_status.value}")
                     else:
-                        result.is_valid = 1
+                        _apply_single_status(result, STATUS_VALID)
                         if mode != "validity":
                             if platform == "toutiao":
                                 info.add_log("指标提取方式: DOM 直接提取")
+                                # 西瓜已拿到内容 ID 时复用头条规范页，避免指标阶段又回到西瓜原页触发壳页/超时。
                                 toutiao_orig_url = url if any(
-                                    d in url for d in ("zjurl.cn", "weitoutiao", "ixigua.com")
+                                    d in url for d in ("zjurl.cn", "weitoutiao")
                                 ) else None
                                 metrics = await client.get_article_metrics_from_dom(
                                     content_id, original_url=toutiao_orig_url
@@ -124,17 +187,28 @@ async def run_single_url_check(
                                     "comments": row["_comments"],
                                 }]
                 else:
-                    result.is_valid = 2
                     fail_reason = row.get("_fetch_fail_reason", "unknown")
-                    info.add_log(f"接口获取失败: {fail_reason} → 标记无效")
+                    if fail_reason == UrlCheckCrawler._FETCH_FAIL_CONTENT:
+                        _apply_single_status(result, STATUS_INVALID, "内容不存在或已删除")
+                        info.add_log(f"接口获取失败: {fail_reason} → 标记无效")
+                    else:
+                        _apply_single_status(
+                            result,
+                            STATUS_EXCEPTION,
+                            f"接口获取失败，疑似风控/网络/浏览器异常: {fail_reason}",
+                        )
+                        info.add_log(f"接口获取失败: {fail_reason} → 标记检测异常")
             else:
-                result.is_valid = 2
-                info.add_log("浏览器客户端创建失败")
-            await crawler._cleanup_browser()
+                _apply_single_status(result, STATUS_EXCEPTION, "浏览器客户端创建失败")
+                info.add_log("浏览器客户端创建失败 → 标记检测异常")
         except Exception as e:
             utils.logger.error(f"[API] 单链接处理异常: {e}")
-            result.is_valid = 2
-            info.add_log(f"处理异常: {e}")
+            _apply_single_status(result, STATUS_EXCEPTION, f"处理异常: {e}")
+            info.add_log(f"处理异常: {e} → 标记检测异常")
+        finally:
+            if crawler:
+                # 旧逻辑只在正常路径清理；现在异常/取消路径也收口，避免后台残留无头浏览器。
+                await crawler._cleanup_browser()
 
     info.single_result = result.model_dump()
     info.add_log("单条检测完成")
@@ -166,13 +240,8 @@ async def run_batch_check(
     from media_platform.url_check.core import UrlCheckCrawler
     groups = group_urls_by_platform(rows)
 
-    _PLATFORM_NAMES = {"dy": "抖音", "ks": "快手", "bili": "B站", "toutiao": "头条", "xhs": "小红书", "wb": "微博"}
-    platform_order = ["dy", "bili", "ks", "toutiao", "xhs", "wb"]
+    platform_order = URL_CHECK_PLATFORM_ORDER
     active_platforms = [p for p in platform_order if p in groups]
-
-    for row in groups.get("unknown", []):
-        info.processed += 1
-        info.add_log(f"未识别平台: {row['url'][:60]}... → 标记无效")
 
     # 多平台并行处理：每个平台独立浏览器，互不干扰
     parallel_enabled = getattr(config, "URLCHECK_PARALLEL_PLATFORMS", True)
@@ -189,12 +258,7 @@ async def run_batch_check(
             info, groups, active_platforms, mode, _PLATFORM_NAMES
         )
 
-    # 处理 unknown 平台
-    if groups.get("unknown"):
-        crawler_unknown = UrlCheckCrawler()
-        for row in groups["unknown"]:
-            await crawler_unknown._save_result(row, is_valid=2)
-        all_results.extend(crawler_unknown._all_results)
+    await _append_unsupported_results(info, groups, all_results)
 
     # 保存结果数据到 TaskInfo
     if all_results:
@@ -250,8 +314,7 @@ async def run_file_upload_check(
     from media_platform.url_check.core import UrlCheckCrawler
     groups = group_urls_by_platform(rows)
 
-    platform_order = ["dy", "bili", "ks", "toutiao", "xhs", "wb"]
-    _PLATFORM_NAMES = {"dy": "抖音", "ks": "快手", "bili": "B站", "toutiao": "头条", "xhs": "小红书", "wb": "微博"}
+    platform_order = URL_CHECK_PLATFORM_ORDER
     active_platforms = [p for p in platform_order if p in groups]
     info.add_log(f"文件解析完成，共 {len(rows)} 条URL待检测")
 
@@ -270,13 +333,7 @@ async def run_file_upload_check(
             info, groups, active_platforms, mode, _PLATFORM_NAMES
         )
 
-    # unknown 平台
-    if groups.get("unknown"):
-        crawler_unknown = UrlCheckCrawler()
-        for row in groups["unknown"]:
-            await crawler_unknown._save_result(row, is_valid=2)
-            info.processed += 1
-        all_results.extend(crawler_unknown._all_results)
+    await _append_unsupported_results(info, groups, all_results)
 
     if all_results:
         info.result_data = all_results
@@ -369,8 +426,7 @@ async def _run_db_rows_check(
     from media_platform.url_check.core import UrlCheckCrawler
     groups = group_urls_by_platform(url_rows)
 
-    platform_order = ["dy", "bili", "ks", "toutiao", "xhs", "wb"]
-    _PLATFORM_NAMES = {"dy": "抖音", "ks": "快手", "bili": "B站", "toutiao": "头条", "xhs": "小红书", "wb": "微博"}
+    platform_order = URL_CHECK_PLATFORM_ORDER
     active_platforms = [p for p in platform_order if p in groups]
     info.add_log(f"数据库读取完成，共 {len(url_rows)} 条URL待检测")
 
@@ -389,13 +445,7 @@ async def _run_db_rows_check(
             info, groups, active_platforms, mode, _PLATFORM_NAMES
         )
 
-    # unknown 平台
-    if groups.get("unknown"):
-        crawler_unknown = UrlCheckCrawler()
-        for row in groups["unknown"]:
-            await crawler_unknown._save_result(row, is_valid=2)
-            info.processed += 1
-        all_results.extend(crawler_unknown._all_results)
+    await _append_unsupported_results(info, groups, all_results)
 
     if all_results:
         info.result_data = all_results
@@ -409,6 +459,35 @@ async def _run_db_rows_check(
         info.result_file = excel_path
 
     info.progress = 100.0
+
+
+async def _append_unsupported_results(info: TaskInfo, groups: dict, all_results: list):
+    """将未接入 url_check 的平台直接写为不支持，不再进入 HTTP/浏览器检测。"""
+    from media_platform.url_check.core import UrlCheckCrawler
+
+    unsupported = [
+        (platform, rows)
+        for platform, rows in groups.items()
+        if not is_supported_url_check_platform(platform)
+    ]
+    if not unsupported:
+        return
+
+    crawler = UrlCheckCrawler()
+    for platform, rows in unsupported:
+        for row in rows:
+            display_platform = row.get("_source_platform") or platform
+            pname = _PLATFORM_NAMES.get(display_platform, _PLATFORM_NAMES.get(platform, platform or "未知"))
+            reason = f"平台 {pname} 暂不支持 url_check，已跳过检测"
+            await crawler._save_result(
+                row, is_valid=STATUS_UNSUPPORTED, metrics=empty_metrics(), reason=reason
+            )
+            info.add_log(f"  [{pname}] 不支持 | {row.get('url', '')[:50]}")
+            info.processed += 1
+            if info.total:
+                info.progress = min((info.processed / info.total) * 100, 99.9)
+
+    all_results.extend(crawler._all_results)
 
 
 async def _parallel_platform_process(
@@ -439,21 +518,22 @@ async def _parallel_platform_process(
         # 实时回调：每处理完一条URL就立即推送日志并更新进度
         def _on_result(r: dict):
             url_short = r.get("url", "")[:50]
-            is_valid = r.get("_is_valid")
-            valid_str = "有效" if is_valid == 1 else "无效"
+            valid_str = _result_status_text(r)
             metrics = r.get("_metrics", {})
             method = r.get("_extract_method", "-")
+            display_platform = r.get("_source_platform") or platform
+            display_pname = platform_names.get(display_platform, pname)
             # 展示 Worker 编号和 Cookie 标识
             w_id = r.get("_worker_id")
             c_id = r.get("_cookie_id")
             worker_tag = f"W{w_id}" if w_id else "W1"
             cookie_tag = f"C{c_id}" if c_id else "无Cookie"
             info.add_log(
-                f"  [{pname}][{worker_tag}|{cookie_tag}][{method}] {valid_str} | "
-                f"赞={metrics.get('praise_count', '-')} "
-                f"评={metrics.get('reply_count', '-')} "
-                f"转={metrics.get('share_count', '-')} "
-                f"播={metrics.get('visit_count', '-')} | "
+                f"  [{display_pname}][{worker_tag}|{cookie_tag}][{method}] {valid_str} | "
+                f"赞={_metric_display(metrics, 'praise_count')} "
+                f"评={_metric_display(metrics, 'reply_count')} "
+                f"转={_metric_display(metrics, 'share_count')} "
+                f"播={_metric_display(metrics, 'visit_count')} | "
                 f"{url_short}"
             )
             info.processed += 1
@@ -466,10 +546,8 @@ async def _parallel_platform_process(
             utils.logger.error(f"[API-Parallel] 平台 {platform} 异常: {e}")
 
         result_count = len(crawler._all_results)
-        valid_count = sum(1 for r in crawler._all_results if r.get("_is_valid") == 1)
-        invalid_count = result_count - valid_count
         info.add_log(
-            f"[{pname}] 完成: 共{result_count}条, 有效{valid_count}, 无效{invalid_count}"
+            f"[{pname}] 完成: 共{result_count}条, {_summarize_status_counts(crawler._all_results)}"
         )
         return crawler
 
@@ -516,20 +594,21 @@ async def _sequential_platform_process(
         # 实时回调
         def _on_result(r: dict, _pname=pname):
             url_short = r.get("url", "")[:50]
-            is_valid = r.get("_is_valid")
-            valid_str = "有效" if is_valid == 1 else "无效"
+            valid_str = _result_status_text(r)
             metrics = r.get("_metrics", {})
             method = r.get("_extract_method", "-")
+            display_platform = r.get("_source_platform") or platform
+            display_pname = platform_names.get(display_platform, _pname)
             w_id = r.get("_worker_id")
             c_id = r.get("_cookie_id")
             worker_tag = f"W{w_id}" if w_id else "W1"
             cookie_tag = f"C{c_id}" if c_id else "无Cookie"
             info.add_log(
-                f"  [{_pname}][{worker_tag}|{cookie_tag}][{method}] {valid_str} | "
-                f"赞={metrics.get('praise_count', '-')} "
-                f"评={metrics.get('reply_count', '-')} "
-                f"转={metrics.get('share_count', '-')} "
-                f"播={metrics.get('visit_count', '-')} | "
+                f"  [{display_pname}][{worker_tag}|{cookie_tag}][{method}] {valid_str} | "
+                f"赞={_metric_display(metrics, 'praise_count')} "
+                f"评={_metric_display(metrics, 'reply_count')} "
+                f"转={_metric_display(metrics, 'share_count')} "
+                f"播={_metric_display(metrics, 'visit_count')} | "
                 f"{url_short}"
             )
             info.processed += 1
@@ -543,9 +622,8 @@ async def _sequential_platform_process(
             utils.logger.error(f"[API] 批量处理平台 {platform} 异常: {e}")
 
         new_results = crawler._all_results[prev_count:]
-        valid_count = sum(1 for r in new_results if r.get("_is_valid") == 1)
         info.add_log(
-            f"[{pname}] 完成: 共{len(new_results)}条, 有效{valid_count}, 无效{len(new_results)-valid_count}"
+            f"[{pname}] 完成: 共{len(new_results)}条, {_summarize_status_counts(new_results)}"
         )
 
     return crawler._all_results

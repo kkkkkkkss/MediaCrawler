@@ -8,10 +8,11 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from tools import utils
+from tools.url_check_status import validity_label
 
 _PLATFORM_NAMES = {
     "dy": "抖音", "ks": "快手", "bili": "B站",
-    "toutiao": "今日头条", "xhs": "小红书", "wb": "微博",
+    "toutiao": "今日头条", "xigua": "西瓜视频", "xhs": "小红书", "wb": "微博",
     "unknown": "未知",
 }
 
@@ -45,6 +46,7 @@ def results_to_json_data(
     items = []
     for result in results:
         platform = result.get("_platform", "unknown")
+        display_platform = result.get("_source_platform") or platform
         metrics = result.get("_metrics", {})
         raw_json = result.get("_raw_json")
         is_valid = result.get("_is_valid", 0)
@@ -53,9 +55,13 @@ def results_to_json_data(
             "id": result.get("id", 0),
             "url": result.get("url", ""),
             "platform": platform,
-            "platform_name": _PLATFORM_NAMES.get(platform, "未知"),
+            "source_platform": display_platform,
+            "platform_name": _PLATFORM_NAMES.get(display_platform, _PLATFORM_NAMES.get(platform, "未知")),
             "content_type": _detect_content_type(platform, raw_json),
             "is_valid": is_valid == 1,
+            "is_valid_code": is_valid,
+            "validity_label": result.get("_validity_label") or validity_label(is_valid),
+            "status_reason": result.get("_status_reason", ""),
             "author": _extract_author(platform, raw_json, metrics),
             "title": _extract_title(platform, raw_json, metrics, result.get("_title", "")),
             "praise_count": metrics.get("praise_count"),

@@ -166,3 +166,19 @@ database/*.db
 ~$*.xls
 ~$*.csv
 /docs/Bug分析与修复报告.md
+
+# Local test artifacts / uploads
+*.xlsx
+*.xls
+*.csv
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.bmp
+
+# Validation outputs and screenshots
+/test_result/
+/bug_img/
+/bug修复/

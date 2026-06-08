@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from tools import utils
+from tools.url_check_status import should_clear_metrics, validity_label
 
 try:
     import openpyxl
@@ -22,6 +23,7 @@ _PLATFORM_NAMES = {
     "ks": "快手",
     "bili": "B站",
     "toutiao": "今日头条",
+    "xigua": "西瓜视频",
     "xhs": "小红书",
     "wb": "微博",
     "tieba": "百度贴吧",
@@ -53,6 +55,7 @@ _COLUMNS = [
     ("visit_count", "播放/浏览数"),
     ("share_count", "分享数"),
     ("is_valid", "链接有效性"),
+    ("status_reason", "检测说明"),
     ("url", "原始链接"),
 ]
 
@@ -240,21 +243,24 @@ def generate_url_check_excel(results: List[Dict], output_path: Optional[str] = N
     # 写入数据行
     for row_idx, result in enumerate(results, 2):
         platform = result.get("_platform", "unknown")
+        display_platform = result.get("_source_platform") or platform
         metrics = result.get("_metrics", {})
         raw_json = result.get("_raw_json")
         is_valid = result.get("_is_valid", 0)
+        clear_metrics = should_clear_metrics(is_valid)
 
         row_data = {
             "id": result.get("id", row_idx - 1),
             "type": _detect_content_type(platform, raw_json),
-            "web_name": _PLATFORM_NAMES.get(platform, "未知"),
+            "web_name": _PLATFORM_NAMES.get(display_platform, _PLATFORM_NAMES.get(platform, "未知")),
             "title": _extract_title(platform, raw_json, metrics, result.get("_title", "")),
             "author": _extract_author(platform, raw_json, metrics),
-            "praise_count": metrics.get("praise_count", ""),
-            "reply_count": metrics.get("reply_count", ""),
-            "visit_count": metrics.get("visit_count", ""),
-            "share_count": metrics.get("share_count", ""),
-            "is_valid": "有效" if is_valid == 1 else "无效",
+            "praise_count": "" if clear_metrics else metrics.get("praise_count", ""),
+            "reply_count": "" if clear_metrics else metrics.get("reply_count", ""),
+            "visit_count": "" if clear_metrics else metrics.get("visit_count", ""),
+            "share_count": "" if clear_metrics else metrics.get("share_count", ""),
+            "is_valid": result.get("_validity_label") or validity_label(is_valid),
+            "status_reason": result.get("_status_reason", ""),
             "url": result.get("url", ""),
         }
 
@@ -296,6 +302,7 @@ _OVERWRITE_COLUMNS = {
 
 # 「链接有效性」等效列名
 _VALIDITY_COLUMN_NAMES = ["链接有效性", "有效性", "是否有效"]
+_STATUS_REASON_COLUMN_NAMES = ["检测说明", "检测原因", "状态说明", "异常原因"]
 
 # 「标题」等效列名正则匹配模式（任一匹配即复用）
 import re as _re
@@ -326,11 +333,12 @@ _ENSURE_COLUMNS = [
     ("分享数", "share_count"),
     ("播放/浏览数", "visit_count"),
     ("链接有效性", "is_valid"),
+    ("检测说明", "status_reason"),
 ]
 
 _PLATFORM_NAMES = {
     "dy": "抖音", "ks": "快手", "bili": "B站",
-    "toutiao": "头条", "xhs": "小红书", "wb": "微博",
+    "toutiao": "头条", "xigua": "西瓜视频", "xhs": "小红书", "wb": "微博",
 }
 
 
@@ -418,6 +426,7 @@ def merge_results_to_excel(
     author_col_idx = _find_equivalent_col(header_map, _AUTHOR_COLUMN_NAMES)
     platform_col_idx = _find_equivalent_col(header_map, _PLATFORM_COLUMN_NAMES)
     validity_col_idx = _find_equivalent_col(header_map, _VALIDITY_COLUMN_NAMES)
+    status_reason_col_idx = _find_equivalent_col(header_map, _STATUS_REASON_COLUMN_NAMES)
 
     # ─── 计算需要追加的缺失列 ───
     append_cols: List[tuple] = []
@@ -443,6 +452,8 @@ def merge_results_to_excel(
         elif key == "is_valid":
             # 有效性列已单独处理覆盖逻辑，只要表头存在任一等效列名即跳过追加
             already_exists = validity_col_idx is not None
+        elif key == "status_reason":
+            already_exists = status_reason_col_idx is not None
 
         if not already_exists:
             append_cols.append((cn_name, key, next_col))
@@ -463,12 +474,17 @@ def merge_results_to_excel(
         is_valid = result.get("_is_valid", 0)
         raw_json = result.get("_raw_json")
         platform = result.get("_platform", "unknown")
+        display_platform = result.get("_source_platform") or platform
+        clear_metrics = should_clear_metrics(is_valid)
 
-        # ① 强制覆盖列（赞/评/转）：始终用爬取值覆盖
+        # ① 强制覆盖列（赞/评/转）：不支持/异常要主动清空，防止保留原表旧值误导审核
         for cn_name, col_idx in overwrite_col_indices.items():
             metric_key = _OVERWRITE_COLUMNS[cn_name]
             new_val = metrics.get(metric_key)
-            if new_val is not None:
+            if clear_metrics:
+                # openpyxl 的 Worksheet.cell(value=None) 不会覆盖旧值；必须直接清空 value。
+                ws.cell(row=row_idx, column=col_idx + 1).value = None
+            elif new_val is not None:
                 ws.cell(row=row_idx, column=col_idx + 1, value=new_val)
 
         # ② 标题列：空值或占位符时填充（覆盖 "-"、"无" 等无效标题）
@@ -500,30 +516,39 @@ def merge_results_to_excel(
             if _is_empty_value(existing):
                 ws.cell(
                     row=row_idx, column=platform_col_idx + 1,
-                    value=_PLATFORM_NAMES.get(platform, platform)
+                    value=_PLATFORM_NAMES.get(display_platform, _PLATFORM_NAMES.get(platform, platform))
                 )
 
         # ⑤ 链接有效性列：始终覆盖（已存在的列也要更新，修复原值为空时不回填的问题）
         if validity_col_idx is not None:
             ws.cell(
                 row=row_idx, column=validity_col_idx + 1,
-                value="有效" if is_valid == 1 else "无效",
+                value=result.get("_validity_label") or validity_label(is_valid),
             )
 
-        # ⑥ 追加的新列
+        # ⑥ 检测说明列：始终覆盖，方便审核区分“不支持”和“疑似风控/异常”
+        if status_reason_col_idx is not None:
+            ws.cell(
+                row=row_idx, column=status_reason_col_idx + 1,
+                value=result.get("_status_reason", ""),
+            )
+
+        # ⑦ 追加的新列
         for cn_name, key, col_idx in append_cols:
             if key == "is_valid":
-                val = "有效" if is_valid == 1 else "无效"
+                val = result.get("_validity_label") or validity_label(is_valid)
+            elif key == "status_reason":
+                val = result.get("_status_reason", "")
             elif key == "visit_count":
-                val = metrics.get("visit_count", "")
+                val = "" if clear_metrics else metrics.get("visit_count", "")
             elif key == "title":
                 val = _extract_title(platform, raw_json, metrics, result.get("_title", ""))
             elif key == "author":
                 val = _extract_author(platform, raw_json, metrics)
             elif key == "platform":
-                val = _PLATFORM_NAMES.get(platform, platform)
+                val = _PLATFORM_NAMES.get(display_platform, _PLATFORM_NAMES.get(platform, platform))
             elif key in ("praise_count", "reply_count", "share_count"):
-                val = metrics.get(key, "")
+                val = "" if clear_metrics else metrics.get(key, "")
             else:
                 val = metrics.get(key, "")
             if val is None:

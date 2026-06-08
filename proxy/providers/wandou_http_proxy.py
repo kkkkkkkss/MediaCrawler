@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 
 import httpx
 
+import config
 from proxy import IpCache, IpGetError, ProxyProvider
 from proxy.types import IpInfoModel
 from tools import utils
@@ -31,6 +32,11 @@ class WanDouHttpProxy(ProxyProvider):
         self.params = {
             "app_key": app_key,
             "num": num,
+            "xy": getattr(config, "WANDOU_PROXY_XY", 1),
+            "type": getattr(config, "WANDOU_API_TYPE", 2),
+            "nr": getattr(config, "WANDOU_NR", 99),
+            "area_id": getattr(config, "WANDOU_AREA_ID", 0),
+            "isp": getattr(config, "WANDOU_ISP", 0),
         }
         self.ip_cache = IpCache()
 
@@ -53,7 +59,10 @@ class WanDouHttpProxy(ProxyProvider):
         ip_infos = []
         async with make_async_client() as client:
             url = self.api_path + "?" + urlencode(self.params)
-            utils.logger.info(f"[WanDouHttpProxy.get_proxy] get ip proxy url:{url}")
+            safe_params = {**self.params, "app_key": "***"}
+            utils.logger.info(
+                f"[WanDouHttpProxy.get_proxy] 提取豌豆短效IP params={safe_params}"
+            )
             response = await client.get(
                 url,
                 headers={
@@ -61,25 +70,31 @@ class WanDouHttpProxy(ProxyProvider):
                 },
             )
             res_dict: Dict = response.json()
-            if res_dict.get("code") == 200:
-                data: List[Dict] = res_dict.get("data", [])
+            if res_dict.get("code") in (0, 200):
+                data = res_dict.get("data", [])
+                if isinstance(data, dict):
+                    data = data.get("proxy_list") or data.get("list") or []
                 current_ts = utils.get_unix_timestamp()
                 for ip_item in data:
+                    expire_ts = utils.get_unix_time_from_time_str(
+                        ip_item.get("expire_time")
+                    )
+                    if not expire_ts:
+                        # 豌豆试用短效 IP 默认 10 分钟；字段异常时用保守 TTL，避免长期复用坏时间。
+                        expire_ts = current_ts + getattr(config, "WANDOU_DEFAULT_EXPIRE_SEC", 600)
                     ip_info_model = IpInfoModel(
                         ip=ip_item.get("ip"),
                         port=ip_item.get("port"),
                         user="",  # WanDou HTTP does not require username password authentication
                         password="",
-                        expired_time_ts=utils.get_unix_time_from_time_str(
-                            ip_item.get("expire_time")
-                        ),
+                        protocol="http://",
+                        expired_time_ts=expire_ts,
                     )
                     ip_key = f"WANDOUHTTP_{ip_info_model.ip}_{ip_info_model.port}"
                     ip_value = ip_info_model.model_dump_json()
                     ip_infos.append(ip_info_model)
-                    self.ip_cache.set_ip(
-                        ip_key, ip_value, ex=ip_info_model.expired_time_ts - current_ts
-                    )
+                    ttl = max(ip_info_model.expired_time_ts - current_ts, 1)
+                    self.ip_cache.set_ip(ip_key, ip_value, ex=ttl)
             else:
                 error_msg = res_dict.get("msg", "unknown error")
                 # Handle specific error codes
